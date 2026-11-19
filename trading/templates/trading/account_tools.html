@@ -1,0 +1,104 @@
+{% load tz %}
+
+{% if signal_groups is not None %}
+<p class="muted">
+    Signals show the latest stored analysis. Execution status shows the outcome
+    of the last trading round that evaluated the instrument.
+    Reload this page after a bot round to see updates.
+</p>
+
+    {% for group in signal_groups %}
+<section class="lab-card">
+    <h2>
+        <a class="lab-header-button" href="{% url 'account' group.account.pk %}">
+            {{ group.account.name }} #{{ group.account.pk }}
+        </a>
+    </h2>
+    <p>{{ group.account.get_bot_display }}</p>
+
+    <div class="lab-table">
+        <table>
+            <thead>
+                <tr>
+                    <th scope="col">Instrument</th>
+                    <th scope="col">Signal</th>
+                    <th scope="col">Reason</th>
+                    <th scope="col">Stored quote time (UTC)</th>
+                    <th scope="col">Execution status</th>
+                    <th scope="col">Last evaluated (UTC)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in group.rows %}
+                <tr>
+                    <td>
+                        <strong>{{ row.instrument.symbol }}</strong>
+                        <br><small>{{ row.instrument.get_group_display }}</small>
+                    </td>
+                    <td>
+                        {% if row.instrument.signal %}
+                        <strong>{{ row.instrument.signal|upper }}</strong>
+                        {% else %}
+                        No signal yet
+                        {% endif %}
+                    </td>
+                    <td>{{ row.instrument.explanation|default:"Waiting for analysis." }}</td>
+                    <td>
+                        {% if row.instrument.quote_time %}
+                        {{ row.instrument.quote_time|utc|date:"Y-m-d H:i" }}
+                        {% if row.quote_is_old %}
+                        <br><small>Over 30 min old</small>
+                        {% endif %}
+                        {% else %}
+                        &mdash;
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if row.instrument.execution_status %}
+                        <strong>{{ row.instrument.execution_status }}</strong>
+                        {% elif row.instrument.group == "option" %}
+                        Analysis only
+                        {% else %}
+                        &mdash;
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if row.instrument.execution_checked_at %}
+                        {{ row.instrument.execution_checked_at|utc|date:"Y-m-d H:i:s" }}
+                        {% else %}
+                        &mdash;
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="6">This account has no analyzed instruments yet.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+    {% empty %}
+<section class="lab-card">
+    <p>No virtual accounts yet.</p>
+</section>
+    {% endfor %}
+{% endif %}
+
+{% if confirm_account_deletion %}
+<section class="lab-card">
+    <h2>{{ account.name }} #{{ account.pk }}</h2>
+    <p>
+        Deleting this trading account permanently removes its positions,
+        trade history, deposits, capital history, and scheduled email reports
+        from Trading Lab.
+    </p>
+
+    <form method="post" action="{% url 'delete_account' account.pk %}">
+        {% csrf_token %}
+        <a class="lab-header-button" href="{% url 'account' account.pk %}">Cancel</a>
+        <button type="submit">Permanently delete account</button>
+    </form>
+</section>
+{% endif %}

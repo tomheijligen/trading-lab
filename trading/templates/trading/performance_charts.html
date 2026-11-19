@@ -1,0 +1,243 @@
+{% if charts %}
+<section class="lab-card" data-performance>
+    <h2>Performance &middot; {{ chart_scope }}</h2>
+
+    <div class="lab-chart-controls">
+        <label>
+            Period
+            <select data-chart-period>
+                <option value="1">Last hour</option>
+                <option value="6">Last 6 hours</option>
+                <option value="24" selected>Last 24 hours</option>
+                <option value="168">Last 7 days</option>
+                <option value="720">Last 30 days</option>
+            </select>
+        </label>
+
+        <label>
+            Detail
+            <select data-chart-detail>
+                <option value="original" selected>Original measurements</option>
+                <option value="minute">Per minute</option>
+                <option value="hour">Per hour</option>
+                <option value="day">Per day</option>
+                <option value="week">Per week</option>
+                <option value="month">Per month</option>
+            </select>
+        </label>
+    </div>
+
+    {% for chart in charts %}
+    <div class="lab-chart-card" data-performance-chart
+         data-color="{{ chart.color }}" data-empty="{{ chart.empty }}">
+        <h3>{{ chart.title }}</h3>
+        <p class="muted">{{ chart.description }}</p>
+
+        <div class="lab-plot lab-chart-plot">
+            <canvas role="img" aria-label="{{ chart.title }}" hidden></canvas>
+            <span data-chart-empty>{{ chart.empty }}</span>
+            {{ chart.points|json_script }}
+        </div>
+        <p class="lab-chart-caption" aria-live="polite"></p>
+    </div>
+    {% endfor %}
+</section>
+
+<style>
+    .lab-chart-controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-bottom: 20px;
+    }
+
+        .lab-chart-controls label {
+            display: grid;
+            gap: 5px;
+        }
+
+    .lab-chart-card + .lab-chart-card {
+        margin-top: 24px;
+    }
+
+    .lab-chart-plot {
+        position: relative;
+        height: 250px;
+        padding: 0;
+    }
+
+        .lab-chart-plot canvas {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .lab-chart-plot [hidden] {
+            display: none;
+        }
+
+    .lab-chart-caption {
+        min-height: 1.4em;
+        margin: 8px 0 0;
+        color: var(--muted, #aeb8c6);
+        font-size: 13px;
+    }
+</style>
+
+<script>
+    (() => {
+        const root = document.currentScript.previousElementSibling.previousElementSibling;
+        const period = root.querySelector("[data-chart-period]");
+        const detail = root.querySelector("[data-chart-detail]");
+        const euro = new Intl.NumberFormat("en", {
+            style: "currency", currency: "EUR",
+        });
+        const timeLabel = new Intl.DateTimeFormat("en", {
+            dateStyle: "medium", timeStyle: "short", timeZoneName: undefined,
+        });
+        const hour = 60 * 60 * 1000;
+        const day = 24 * hour;
+        const left = 82;
+        const right = 14;
+
+        function bucket(timestamp, resolution) {
+            // Group in UTC so bucket boundaries are consistent.
+            if (resolution === "month") {
+                return new Date(timestamp).toISOString().slice(0, 7);
+            }
+            if (resolution === "week") {
+                // Shift the Unix epoch so weeks start on Monday.
+                return Math.floor((timestamp + 3 * day) / (7 * day));
+            }
+            const sizes = { minute: 60000, hour, day };
+            return Math.floor(timestamp / sizes[resolution]);
+        }
+
+        for (const card of root.querySelectorAll("[data-performance-chart]")) {
+            const plot = card.querySelector(".lab-chart-plot");
+            const canvas = card.querySelector("canvas");
+            const context = canvas.getContext("2d");
+            const empty = card.querySelector("[data-chart-empty]");
+            const caption = card.querySelector(".lab-chart-caption");
+            const stored = JSON.parse(card.querySelector('script[type="application/json"]').textContent)
+                .map(point => ({ time: Date.parse(point.time), value: point.value }));
+            let points = [];
+
+            function showPoint(point) {
+                const measurement = points.length === 1 ? "point" : "points";
+                caption.textContent =
+                    `${timeLabel.format(new Date(point.time))} | ${euro.format(point.value)} | ${points.length} ${measurement} shown`;
+            }
+
+            function draw() {
+                if (!points.length) return;
+                const width = plot.clientWidth;
+                const height = plot.clientHeight;
+                if (width < 110 || height < 40) return;
+
+                const scale = window.devicePixelRatio || 1;
+                canvas.width = width * scale;
+                canvas.height = height * scale;
+                context.scale(scale, scale);
+
+                const values = points.map(point => point.value);
+                const low = Math.min(...values);
+                const high = Math.max(...values);
+                const span = high - low;
+                const startTime = points[0].time;
+                const timeSpan = points.at(-1).time - startTime;
+                const top = 16;
+                const plotHeight = height - top - 18;
+                const plotWidth = width - left - right;
+
+                context.fillStyle = "#aeb8c6";
+                context.font = "12px system-ui";
+                const marks = span ? [0, 0.33, 0.67, 1] : [0.5];
+                for (const mark of marks) {
+                    context.fillText(
+                        euro.format(high - mark * span),
+                        7,
+                        top + mark * plotHeight + 4,
+                        left - 14,
+                    );
+                }
+
+                context.beginPath();
+                context.lineWidth = 2;
+                context.strokeStyle = card.dataset.color;
+                context.fillStyle = card.dataset.color;
+
+                points.forEach((point, index) => {
+                    const xFraction = timeSpan ? (point.time - startTime) / timeSpan : 0.5;
+                    const yFraction = span ? (high - point.value) / span : 0.5;
+                    const x = left + xFraction * plotWidth;
+                    const y = top + yFraction * plotHeight;
+
+                    if (points.length === 1) {
+                        context.arc(x, y, 4, 0, Math.PI * 2);
+                        context.fill();
+                    } else if (index === 0) {
+                        context.moveTo(x, y);
+                    } else {
+                        context.lineTo(x, y);
+                    }
+                });
+
+                if (points.length > 1) context.stroke();
+            }
+
+            function update() {
+                const cutoff = Date.now() - Number(period.value) * hour;
+                const visible = stored.filter(point => point.time >= cutoff);
+
+                if (detail.value === "original") {
+                    points = visible;
+                } else {
+                    // Keep the last actual measurement in each bucket.
+                    const buckets = new Map();
+                    for (const point of visible) {
+                        buckets.set(bucket(point.time, detail.value), point);
+                    }
+                    points = Array.from(buckets.values());
+                }
+
+                canvas.hidden = !points.length;
+                empty.hidden = Boolean(points.length);
+
+                if (!points.length) {
+                    empty.textContent = stored.length
+                        ? "No measurements in this period. Choose a longer period."
+                        : card.dataset.empty;
+                    caption.textContent = "";
+                    return;
+                }
+
+                showPoint(points.at(-1));
+                draw();
+            }
+
+            canvas.addEventListener("pointermove", event => {
+                if (points.length < 2) return;
+                const width = plot.clientWidth - left - right;
+                const fraction = Math.max(0, Math.min(1, (event.offsetX - left) / width));
+                const first = points[0].time;
+                const target = first + fraction * (points.at(-1).time - first);
+                const nearest = points.reduce((best, point) =>
+                    Math.abs(point.time - target) < Math.abs(best.time - target) ? point : best
+                );
+                showPoint(nearest);
+            });
+
+            canvas.addEventListener("pointerleave", () => {
+                if (points.length) showPoint(points.at(-1));
+            });
+
+            period.addEventListener("change", update);
+            detail.addEventListener("change", update);
+            new ResizeObserver(draw).observe(plot);
+            update();
+        }
+    })();
+</script>
+{% endif %}

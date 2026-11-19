@@ -1,0 +1,130 @@
+<section class="lab-card">
+    <h2>Virtual account comparison</h2>
+    <p class="muted">
+        All-time results. Return includes open positions at their latest stored value
+        and excludes deposits from profit. Accounts may have started on different dates.
+    </p>
+
+    <div class="lab-table">
+        <table>
+            <thead>
+                <tr>
+                    <th scope="col">Account</th>
+                    <th scope="col">Strategy</th>
+                    <th scope="col">Value</th>
+                    <th scope="col">Return on paid-in capital</th>
+                    <th scope="col">Realized after fees</th>
+                    <th scope="col">Wins / losses / flat</th>
+                    <th scope="col">Learning</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in strategy_rows %}
+                <tr>
+                    <td><a href="{% url 'account' row.account.pk %}">{{ row.account.name }}</a></td>
+                    <td>{{ row.account.get_bot_display }}</td>
+                    <td>&euro;{{ row.value|floatformat:2 }}</td>
+                    <td>
+                        {% if row.return_pct is not None %}
+                        {{ row.return_pct|floatformat:2 }}%
+                        {% else %}
+                        &mdash;
+                        {% endif %}
+                    </td>
+                    <td>&euro;{{ row.realized|floatformat:2 }}</td>
+                    <td>{{ row.wins }} / {{ row.losses }} / {{ row.flat }}</td>
+                    <td><a href="?learn={{ row.account.pk }}#learning">Run learning test</a></td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="7">Create a virtual account to start comparing strategies.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+{% include "trading/trade_history.html" with history_title="Executed trades across all accounts" %}
+
+<section class="lab-card">
+    <h2>What worked in recorded trades?</h2>
+
+    {% for row in strategy_rows %}
+    <details>
+        <summary>
+            {{ row.account.name }} #{{ row.account.pk }}
+            &middot; {{ row.account.get_bot_display }}
+        </summary>
+
+        {% for item in row.symbols %}
+        <p>
+            <strong>{{ item.instrument__symbol }}</strong>
+            {{ item.instrument__exchange }}
+            &middot; {{ item.wins }} wins, {{ item.losses }} losses, {{ item.flat }} flat
+            &middot; Net &euro;{{ item.total|floatformat:2 }}
+        </p>
+        {% empty %}
+        <p>No closed trades yet.</p>
+        {% endfor %}
+
+        <p>
+            <a href="{% url 'reports' row.account.pk %}">
+                Read individual order reasons
+            </a>
+        </p>
+    </details>
+    {% empty %}
+    <p>No virtual accounts yet.</p>
+    {% endfor %}
+</section>
+
+<section class="lab-card" id="learning">
+    <h2>Learning lab</h2>
+    {% if learning %}
+    <p>History source: <strong>{{ lab_account.name }}</strong></p>
+    {% if learning.error %}
+    <p>{{ learning.error }}</p>
+    <p>Use Market to collect daily history for this account and try again.</p>
+    {% else %}
+    <p>Instruments: {{ learning.included|join:", " }}</p>
+    <p>Training: {{ learning.training_start|date:"Y-m-d" }} to {{ learning.training_end|date:"Y-m-d" }}</p>
+    <div class="lab-table">
+        <table>
+            <thead>
+                <tr><th scope="col">Strategy</th><th scope="col">Training return</th><th scope="col">Closed trades</th></tr>
+            </thead>
+            <tbody>
+                {% for row in learning.training %}
+                <tr>
+                    <td>{{ row.label }}</td>
+                    <td>{{ row.return_pct|floatformat:2 }}%</td>
+                    <td>{{ row.exits }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <h3>Validation on later dates</h3>
+    <p>{{ learning.validation_start|date:"Y-m-d" }} to {{ learning.validation_end|date:"Y-m-d" }}</p>
+    <p>
+        Current: {{ learning.baseline.label }}
+        &middot; Return {{ learning.baseline.return_pct|floatformat:2 }}%
+        &middot; Worst instrument drawdown {{ learning.baseline.drawdown_pct|floatformat:2 }}%
+        &middot; {{ learning.baseline.exits }} closed trades
+    </p>
+    <p>
+        Candidate: {{ learning.candidate.label }}
+        &middot; Return {{ learning.candidate.return_pct|floatformat:2 }}%
+        &middot; Worst instrument drawdown {{ learning.candidate.drawdown_pct|floatformat:2 }}%
+        &middot; {{ learning.candidate.exits }} closed trades
+    </p>
+    <p>Validation difference: {{ learning.improvement|floatformat:2 }} percentage points.</p>
+    <p><strong>{{ learning.decision }}</strong></p>
+    {% endif %}
+    {% if learning.skipped %}
+    <p class="muted">Skipped for insufficient history: {{ learning.skipped|join:", " }}</p>
+    {% endif %}
+    {% else %}
+    <p>Choose Run learning test next to a virtual account. The test uses its stored daily prices.</p>
+    {% endif %}
+</section>

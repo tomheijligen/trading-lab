@@ -1,0 +1,942 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ title }} &middot; Trading Lab</title>
+    <style>
+        :root {
+            color-scheme: dark;
+            font: 15px system-ui, sans-serif;
+            background: #0b0d10;
+            color: #eef1f5;
+            --panel: #11151a;
+            --border: #292f38;
+            --muted: #aeb8c6;
+            --mint: #48d6aa;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            max-width: 1580px;
+            margin: auto;
+            padding: clamp(16px, 3vw, 40px);
+        }
+
+        a {
+            color: #c4b3ff;
+        }
+
+        h1, h2, h3 {
+            margin-top: 0;
+        }
+
+        h1 {
+            font-size: clamp(25px, 3vw, 34px);
+        }
+
+        h2 {
+            font-size: 17px;
+        }
+
+        h3 {
+            font-size: 15px;
+        }
+
+        small, .muted, .helptext {
+            color: var(--muted);
+        }
+
+        .errorlist {
+            color: #ff98aa;
+        }
+
+        section {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 18px;
+            margin-bottom: 14px;
+            overflow-wrap: anywhere;
+        }
+
+        a:focus-visible, button:focus-visible, input:focus-visible,
+        select:focus-visible, textarea:focus-visible {
+            outline: 2px solid var(--mint);
+            outline-offset: 3px;
+        }
+
+        input, select, textarea, button {
+            font: inherit;
+            border: 1px solid #424a58;
+            border-radius: 7px;
+            padding: 8px 10px;
+        }
+
+        input, select, textarea {
+            background: #141920;
+            color: inherit;
+        }
+
+        textarea {
+            width: min(550px, 100%);
+        }
+
+        button {
+            cursor: pointer;
+            font-weight: 700;
+            background: #b6a4ff;
+            color: #18122b;
+        }
+
+        form p label {
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        fieldset {
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            padding: 12px;
+        }
+
+            fieldset label {
+                display: block;
+                margin: 5px 0;
+            }
+
+        details {
+            margin: 12px 0;
+        }
+
+        summary {
+            cursor: pointer;
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+        }
+
+        th, td {
+            text-align: left;
+            padding: 10px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        th {
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .lab-table {
+            overflow-x: auto;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+        }
+
+        .metric {
+            border-radius: 8px;
+            padding: 12px;
+            background: #212633;
+        }
+
+            .metric strong {
+                display: block;
+                margin-top: 5px;
+            }
+
+        /* Header, profile and navigation. */
+        .lab-header, .lab-header-actions, .lab-tabs {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .lab-header {
+            justify-content: space-between;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 15px;
+            margin-bottom: 17px;
+        }
+
+        .lab-header-actions form {
+            margin: 0;
+        }
+
+        .lab-brand {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            text-decoration: none;
+            color: #f1f4f8;
+            font-weight: 750;
+            font-size: 17px;
+        }
+
+        .lab-brand-mark, .lab-avatar-initial {
+            display: inline-grid;
+            place-items: center;
+            background: #18372f;
+            color: #79e6c7;
+        }
+
+        .lab-brand-mark {
+            width: 34px;
+            height: 34px;
+            border: 1px solid #2a5349;
+            border-radius: 10px;
+        }
+
+        .lab-header-button {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 11px;
+            border: 1px solid #29323c;
+            border-radius: 8px;
+            background: #141920;
+            color: #c5cfdb;
+            font-size: 13px;
+            font-weight: 650;
+            text-decoration: none;
+        }
+
+            .lab-header-button:hover {
+                background: #232d37;
+                color: #f1f4f8;
+            }
+
+        .lab-avatar {
+            width: 28px;
+            height: 28px;
+            flex: 0 0 auto;
+            border-radius: 50%;
+            object-fit: cover;
+        }
+
+        .lab-avatar-large {
+            width: 72px;
+            height: 72px;
+        }
+
+        .lab-profile-intro {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+            .lab-profile-intro h2 {
+                margin-bottom: 4px;
+            }
+
+            .lab-profile-intro p {
+                margin: 0;
+            }
+
+        .lab-tabs {
+            padding: 7px;
+            margin-bottom: 17px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: #101318;
+        }
+
+            .lab-tabs a {
+                padding: 8px 12px;
+                border-radius: 7px;
+                color: var(--muted);
+                font-size: 14px;
+                font-weight: 650;
+                text-decoration: none;
+            }
+
+                .lab-tabs a:hover, .lab-tabs a[aria-current="page"] {
+                    background: #242c35;
+                    color: #f4f6f8;
+                }
+
+                .lab-tabs a[aria-current="page"] {
+                    box-shadow: inset 0 -2px var(--mint);
+                }
+
+            .lab-tabs .lab-new {
+                margin-left: auto;
+                background: var(--mint);
+                color: #081712;
+            }
+
+                .lab-tabs .lab-new:hover {
+                    background: #7ce6c6;
+                    color: #081712;
+                }
+
+        /* Signed-in layout and sidebar. */
+        .lab-layout-signed-in {
+            display: grid;
+            grid-template-columns: 245px minmax(0, 1fr);
+            align-items: start;
+            gap: 18px;
+        }
+
+        .lab-main {
+            min-width: 0;
+        }
+
+        .lab-sidebar {
+            padding: 12px;
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            background: var(--panel);
+        }
+
+        .lab-sidebar-heading, .lab-account-link {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .lab-sidebar-heading {
+            padding: 4px 4px 10px;
+        }
+
+            .lab-sidebar-heading h2 {
+                margin: 0;
+                font-size: 14px;
+            }
+
+            .lab-sidebar-heading a {
+                padding: 3px 8px;
+                color: var(--mint);
+                text-decoration: none;
+            }
+
+        .lab-account-link {
+            padding: 9px 8px;
+            margin-top: 5px;
+            border: 1px solid transparent;
+            border-radius: 8px;
+            color: inherit;
+            text-decoration: none;
+        }
+
+            .lab-account-link:hover, .lab-account-link[aria-current="page"] {
+                background: #202832;
+                border-color: #353f4b;
+            }
+
+        .lab-account-meta {
+            min-width: 0;
+        }
+
+            .lab-account-meta strong {
+                display: block;
+                font-size: 13px;
+                overflow-wrap: anywhere;
+            }
+
+            .lab-account-meta small {
+                display: block;
+                margin-top: 3px;
+            }
+
+        .lab-return {
+            white-space: nowrap;
+            font-size: 12px;
+            font-weight: 650;
+        }
+
+        .lab-return-gain {
+            color: var(--mint);
+        }
+
+        .lab-return-loss {
+            color: #ff98aa;
+        }
+
+        .lab-return-neutral {
+            color: var(--muted);
+        }
+
+        /* Dashboard cards and empty chart states. */
+        .lab-top, .lab-stats {
+            display: grid;
+            gap: 14px;
+        }
+
+        .lab-top {
+            grid-template-columns: 1.1fr 1fr;
+            margin-bottom: 14px;
+        }
+
+        .lab-stats {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .lab-top .lab-card {
+            margin-bottom: 0;
+            min-width: 0;
+        }
+
+        .lab-stat h2 {
+            font-size: 14px;
+            margin: 10px 0 6px;
+            color: var(--muted);
+        }
+
+        .lab-stat strong {
+            display: block;
+            font-size: 27px;
+        }
+
+        .lab-icon {
+            display: inline-grid;
+            place-items: center;
+            width: 32px;
+            height: 32px;
+            border-radius: 9px;
+            background: #222a34;
+            font-weight: 700;
+        }
+
+        .lab-mint {
+            color: var(--mint);
+        }
+
+        .lab-blue {
+            color: #58b7fa;
+        }
+
+        .lab-amber {
+            color: #e8b36a;
+        }
+
+        .lab-violet {
+            color: #aa90f7;
+        }
+
+        .lab-allocation {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 20px;
+            min-height: 210px;
+        }
+
+        .lab-ring {
+            display: grid;
+            place-items: center;
+            width: 168px;
+            aspect-ratio: 1;
+            border: 12px solid #29333d;
+            border-radius: 50%;
+            outline: 1px dashed #4b5968;
+            outline-offset: -20px;
+            text-align: center;
+        }
+
+            .lab-ring span {
+                font-size: 25px;
+            }
+
+            .lab-ring small {
+                display: block;
+                font-size: 12px;
+            }
+
+        .lab-legend {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+
+            .lab-legend li {
+                padding: 5px 0;
+                color: var(--muted);
+            }
+
+            .lab-legend i {
+                display: inline-block;
+                width: 8px;
+                height: 8px;
+                margin-right: 8px;
+                border-radius: 3px;
+                background: var(--key);
+            }
+
+        .lab-plot {
+            display: grid;
+            place-items: center;
+            min-height: 220px;
+            padding: 16px;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background-color: #0d1014;
+            background-image: linear-gradient(#202831 1px, transparent 1px), linear-gradient(90deg, #202831 1px, transparent 1px);
+            background-size: 100% 44px, 12.5% 100%;
+            text-align: center;
+        }
+
+            .lab-plot span {
+                padding: 8px 12px;
+                border: 1px solid #303946;
+                border-radius: 7px;
+                background: #171d25;
+                color: var(--muted);
+            }
+
+        .lab-danger-link {
+            color: #ffb2bf;
+        }
+
+        @media (max-width: 1000px) {
+            .lab-layout-signed-in, .lab-top {
+                grid-template-columns: minmax(0, 1fr);
+            }
+        }
+
+        @media (max-width: 500px) {
+            .lab-stats {
+                grid-template-columns: minmax(0, 1fr);
+            }
+
+            .lab-tabs .lab-new {
+                margin-left: 0;
+            }
+        }
+        /* Give content links a button style while keeping normal link behavior. */
+        .lab-main a[href]:not(.lab-tabs a):not(.lab-header-button) {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            min-height: 32px;
+            max-width: 100%;
+            padding: 5px 10px;
+            border: 1px solid #343e4b;
+            border-radius: 8px;
+            background: #171e27;
+            color: #dce5ef;
+            font-size: 13px;
+            font-weight: 650;
+            line-height: 1.3;
+            text-decoration: none;
+            overflow-wrap: anywhere;
+        }
+
+            .lab-main a[href]:not(.lab-tabs a):not(.lab-header-button):hover {
+                background: #22303a;
+                border-color: #48d6aa;
+                color: #f4f8fc;
+            }
+
+        /* Align the profile, Administration and other header actions. */
+        .lab-header-actions > .lab-header-button {
+            box-sizing: border-box;
+            height: 44px;
+            padding: 0 12px;
+            align-items: center;
+            white-space: nowrap;
+        }
+
+        .lab-header-actions .lab-avatar {
+            width: 28px;
+            height: 28px;
+        }
+    </style>
+</head>
+
+<body>
+    <nav class="lab-header" aria-label="Main navigation">
+        <a class="lab-brand" href="{% url 'dashboard' %}">
+            <span class="lab-brand-mark" aria-hidden="true">&#8599;</span>
+            Trading Lab
+        </a>
+
+        <div class="lab-header-actions">
+            {% if user.is_authenticated %}
+            {% if not dashboard %}
+            <a class="lab-header-button" href="{% url 'create_account' %}">+ New account</a>
+            {% endif %}
+            {% url 'admin:index' as admin_url %}
+            {% if user.is_staff and admin_url %}
+            <a class="lab-header-button" href="{{ admin_url }}">Administration</a>
+            {% endif %}
+            <a class="lab-header-button" href="{% url 'profile' %}">
+                {% if lab_has_avatar %}
+                <img class="lab-avatar" src="{% url 'profile_avatar' %}" alt="">
+                {% else %}
+                <span class="lab-avatar lab-avatar-initial" aria-hidden="true">
+                    {{ lab_display_name|slice:":1"|upper }}
+                </span>
+                {% endif %}
+                <span>{{ lab_display_name|default:"Profile" }}</span>
+            </a>
+            {% else %}
+            <a class="lab-header-button" href="{% url 'login' %}">Sign in</a>
+            <a class="lab-header-button" href="{% url 'register' %}">Register</a>
+            {% endif %}
+        </div>
+    </nav>
+
+    {% if account %}
+    <nav class="lab-tabs" aria-label="Trading account">
+        <a href="{% url 'dashboard' %}">All accounts</a>
+        <a href="{% url 'account' account.pk %}"
+           {% if overview %}aria-current="page" {% endif %}>Overview</a>
+        {% if account.mode == "virtual" %}
+        <a href="{% url 'market' account.pk %}"
+           {% if market %}aria-current="page" {% endif %}>Market</a>
+        <a href="{% url 'reports' account.pk %}"
+           {% if reports %}aria-current="page" {% endif %}>Reports</a>
+        {% endif %}
+        <a href="{% url 'all_signals' %}">All signals</a>
+    </nav>
+    {% endif %}
+
+    {% for message in messages %}
+    <p role="status">{{ message }}</p>
+    {% endfor %}
+
+    <div class="lab-layout{% if user.is_authenticated %} lab-layout-signed-in{% endif %}">
+        {% if user.is_authenticated %}
+        <aside class="lab-sidebar" aria-label="Your trading accounts">
+            <div class="lab-sidebar-heading">
+                <h2>Trading accounts</h2>
+                <a href="{% url 'create_account' %}" aria-label="Create trading account">+</a>
+            </div>
+            {% for entry in lab_sidebar_accounts %}
+            <a class="lab-account-link" href="{% url 'account' entry.pk %}"
+               {% if entry.pk == account.pk %}aria-current="page" {% endif %}>
+                <span class="lab-account-meta">
+                    <strong>{{ entry.name }}</strong>
+                    <small>{{ entry.mode_label }}</small>
+                </span>
+                <span class="lab-return lab-return-{{ entry.tone }}">{{ entry.result }}</span>
+            </a>
+            {% empty %}
+            <p class="muted">No trading accounts yet.</p>
+            {% endfor %}
+        </aside>
+        {% endif %}
+
+        <main class="lab-main">
+            {% if not dashboard %}<h1>{{ title }}</h1>{% endif %}
+
+            {% if request.resolver_match.url_name == "all_signals" %}
+            <nav class="lab-tabs" aria-label="Signals navigation">
+                <a href="{% url 'dashboard' %}">Overview</a>
+                <a href="{% url 'all_signals' %}" aria-current="page">Signals</a>
+            </nav>
+            {% endif %}
+
+            {% if request.resolver_match.url_name == "all_signals" or confirm_account_deletion %}
+            {% include "trading/account_tools.html" %}
+            {% endif %}
+
+            {% if strategy_comparison %}
+            {% include "trading/strategy_comparison.html" %}
+            {% endif %}
+
+            {% if profile_form %}
+            <section class="lab-card">
+                <div class="lab-profile-intro">
+                    {% if lab_has_avatar %}
+                    <img class="lab-avatar lab-avatar-large"
+                         src="{% url 'profile_avatar' %}" alt="Your profile photo">
+                    {% endif %}
+                    <div>
+                        <h2>{{ lab_display_name }}</h2>
+                        <p class="muted">{{ user.email|default:"No email address on file." }}</p>
+                    </div>
+                </div>
+                <form method="post" enctype="multipart/form-data">
+                    {% csrf_token %}
+                    {{ profile_form.as_p }}
+                    <button type="submit">Save profile</button>
+                </form>
+            </section>
+            <section class="lab-card">
+                <h2>Session</h2>
+                <form method="post" action="{% url 'logout' %}">
+                    {% csrf_token %}
+                    <button type="submit">Sign out</button>
+                </form>
+            </section>
+            {% endif %}
+
+            {% if form %}
+            <section class="lab-card">
+                <form method="post">
+                    {% csrf_token %}
+                    {{ form.as_p }}
+                    {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+                    <button type="submit">{{ submit }}</button>
+                </form>
+            </section>
+            {% endif %}
+
+            {% if confirmation %}
+            <section class="lab-card">
+                <form method="post">
+                    {% csrf_token %}
+                    <button type="submit">Confirm email</button>
+                </form>
+            </section>
+            {% endif %}
+
+            {% if dashboard %}
+            {% include "trading/dashboard.html" %}
+            {% endif %}
+
+            {% if overview %}
+            <section class="lab-card">
+                {% if account.mode == "virtual" %}
+                <div class="grid">
+                    <div class="metric">Account value<strong>&euro;{{ value }}</strong></div>
+                    <div class="metric">Available trading cash<strong>&euro;{{ account.cash }}</strong></div>
+                    <div class="metric">Reserved deposits<strong>&euro;{{ account.reserve }}</strong></div>
+                    <div class="metric">Profit excluding deposits<strong>&euro;{{ profit }}</strong></div>
+                </div>
+
+                <p>{{ account.get_bot_display }}</p>
+                <div class="lab-table">
+                    <table>
+                        <thead><tr><th>Asset class</th><th>Target</th><th>Invested</th></tr></thead>
+                        <tbody>
+                            {% for name, target, invested in groups %}
+                            <tr><td>{{ name }}</td><td>{{ target }}%</td><td>&euro;{{ invested }}</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <p class="muted">Option targets remain in cash. Options execution is unavailable.</p>
+
+                <form method="post" action="{% url 'schedule' account.pk %}">
+                    {% csrf_token %}
+                    {% if account.automatic %}
+                    <button type="submit" name="enabled" value="0">Pause scheduled rounds</button>
+                    {% else %}
+                    <button type="submit" name="enabled" value="1">Enable scheduled rounds</button>
+                    {% endif %}
+                </form>
+
+                <form method="post" action="{% url 'schedule' account.pk %}">
+                    {% csrf_token %}
+                    {% if account.auto_discovery %}
+                    <p>Automatic discovery is on.</p>
+                    <button type="submit" name="discovery" value="0">Disable automatic discovery</button>
+                    {% else %}
+                    <p>Let the bot select instruments for asset classes with a target allocation.</p>
+                    <button type="submit" name="discovery" value="1">Enable automatic discovery</button>
+                    {% endif %}
+                </form>
+                {% else %}
+                <p>Manual deposit register. Broker execution is unavailable.</p>
+                {% endif %}
+            </section>
+
+            {% if show_positions %}
+            <section class="lab-card">
+                <h2>Open positions</h2>
+                <div class="lab-table">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th scope="col">Instrument</th>
+                                <th scope="col">Asset class</th>
+                                <th scope="col">Units</th>
+                                <th scope="col">Invested cost</th>
+                                <th scope="col">Latest value</th>
+                                <th scope="col">Unrealized result</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for position in positions %}
+                            <tr>
+                                <td><strong>{{ position.instrument.symbol }}</strong></td>
+                                <td>{{ position.instrument.get_group_display }}</td>
+                                <td>{{ position.instrument.units|floatformat:-10 }}</td>
+                                <td>&euro;{{ position.instrument.cost|floatformat:2 }}</td>
+                                <td>&euro;{{ position.value|floatformat:2 }}</td>
+                                <td>&euro;{{ position.profit|floatformat:2 }}</td>
+                            </tr>
+                            {% empty %}
+                            <tr><td colspan="6">No open positions yet. Executed virtual buys will appear here.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <p class="muted">Values use the latest stored quote. Unrealized results exclude future sell fees.</p>
+            </section>
+            {% endif %}
+            {% include "trading/performance_charts.html" %}
+            {% if trade_page %}
+                {% include "trading/trade_history.html" with history_title="Executed trades" %}
+            {% endif %}
+
+            <section class="lab-card">
+                <h2>Deposits</h2>
+                <form method="post" action="{% url 'deposit' account.pk %}">
+                    {% csrf_token %}
+                    {{ deposit_form.as_p }}
+                    <button type="submit">Record deposit</button>
+                </form>
+                {% for entry in deposits %}
+                <p>
+                    {{ entry.created|date:"Y-m-d H:i" }} UTC &middot; &euro;{{ entry.amount }}
+                    &middot; {{ entry.get_destination_display }}
+                    &middot; {% if entry.booked %}Booked{% else %}Reported, unverified{% endif %}
+                </p>
+                {% endfor %}
+            </section>
+
+            <section class="lab-card">
+                <h2>Account settings</h2>
+                <a class="lab-header-button lab-danger-link"
+                   href="{% url 'delete_account' account.pk %}">Delete account</a>
+            </section>
+            {% endif %}
+
+            {% if market %}
+            <section class="lab-card">
+                <p>{{ account.get_bot_display }} &middot; Signals use completed daily closes.</p>
+                <p><a href="{% url 'add_instrument' account.pk %}">Add instrument</a></p>
+                <form method="post" action="{% url 'run' account.pk %}">
+                    {% csrf_token %}
+                    <button type="submit" name="action" value="quotes">Refresh market data</button>
+                    <button type="submit" name="action" value="trade">Run virtual bot</button>
+                </form>
+            </section>
+
+            {% for item in instruments %}
+            <section class="lab-card">
+                <h2>{{ item.symbol }} &middot; {{ item.get_group_display }}</h2>
+                {% if item.quote_time %}
+                <p>Latest stored quote &euro;{{ item.price }} &middot; {{ item.quote_time|date:"Y-m-d H:i" }} UTC</p>
+                <p>Position {{ item.units|floatformat:-10 }} units &middot; Invested cost &euro;{{ item.cost }}</p>
+                {% endif %}
+
+                {% if item.signal %}
+                <p><strong>{{ item.signal|upper }}</strong> &middot; {{ item.explanation }}</p>
+                {% else %}
+                <p>Waiting for price history.</p>
+                {% endif %}
+
+                {% if item.group == "option" %}
+                <p>Imported contract history is for analysis only.</p>
+                <a href="{% url 'option_history' account.pk item.pk %}">Import option contract CSV</a>
+                {% else %}
+                <p>Fixed stop {{ item.stop }}% &middot; Trailing stop {{ item.trailing }}%</p>
+                {% if item.stop_bar %}
+                <p>Stopped out. Waiting for a new strategy setup.</p>
+                {% endif %}
+                <a href="{% url 'stops' account.pk item.pk %}">Edit stops</a>
+                {% endif %}
+
+                {% if item.history %}
+                <details>
+                    <summary>Daily close history &middot; {{ item.currency }} &middot; {{ item.source }}</summary>
+                    <div class="lab-table">
+                        <table>
+                            <thead><tr><th>Date</th><th>Close</th></tr></thead>
+                            <tbody>
+                                {% for day, close in item.history reversed %}
+                                <tr><td>{{ day }}</td><td>{{ close }}</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </details>
+                {% endif %}
+            </section>
+            {% empty %}
+            <section class="lab-card">
+                {% if account.auto_discovery %}
+                <p>No instruments discovered yet. The next virtual bot round will scan for candidates.</p>
+                {% else %}
+                <p>Add an instrument or enable automatic discovery on Overview.</p>
+                {% endif %}
+            </section>
+            {% endfor %}
+            {% endif %}
+
+            {% if reports %}
+            <section class="lab-card">
+                <nav class="lab-tabs" aria-label="Report period">
+                    {% for period_key, period_label in periods %}
+                    <a href="?period={{ period_key }}">{{ period_label }}</a>
+                    {% endfor %}
+                </nav>
+                <p><a class="lab-header-button" href="{% url 'strategy_comparison' %}">Compare strategies</a></p>
+                <p>{{ start|date:"Y-m-d H:i" }} to {{ end|date:"Y-m-d H:i" }} UTC</p>
+
+                <div class="grid">
+                    <div class="metric">Orders<strong>{{ count }}</strong></div>
+                    <div class="metric">Winning exits<strong>{{ wins }}</strong></div>
+                    <div class="metric">Losing exits<strong>{{ losses }}</strong></div>
+                    <div class="metric">Break-even exits<strong>{{ flat }}</strong></div>
+                    <div class="metric">Realized result after costs<strong>&euro;{{ net }}</strong></div>
+                </div>
+                <p class="muted">The result includes positions closed in this period. Open positions are excluded.</p>
+            </section>
+
+            <section class="lab-card">
+                <h2>Email reports</h2>
+                {% if user.email %}
+                <p>Send scheduled reports to <strong>{{ user.email }}</strong>.</p>
+                <form method="post" action="{% url 'report_email_settings' account.pk %}">
+                    {% csrf_token %}
+                    <fieldset>
+                        <legend>Delivery periods</legend>
+                        {% for period_key, period_label in periods %}
+                        <label>
+                            <input type="checkbox" name="email_periods" value="{{ period_key }}"
+                                   {% if period_key in email_periods %}checked{% endif %}>
+                            {{ period_label }}
+                        </label>
+                        {% endfor %}
+                    </fieldset>
+                    <p class="muted">Clear all selections to stop scheduled emails.</p>
+                    <button type="submit">Save email settings</button>
+                </form>
+                {% else %}
+                <p>Your login needs an email address before you can schedule reports.</p>
+                {% endif %}
+            </section>
+
+            <section class="lab-card">
+                <h2>Order explanations</h2>
+                {% if count > 200 %}
+                <p>Showing the latest 200 orders. The summary covers the entire period.</p>
+                {% endif %}
+                {% for trade in trades %}
+                <details>
+                    <summary>
+                        {{ trade.created|date:"Y-m-d H:i" }} UTC &middot; {{ trade.side }} {{ trade.instrument.symbol }}
+                        {% if trade.side == "Sell" %}&middot; &euro;{{ trade.profit }}{% endif %}
+                    </summary>
+                    <p><strong>{{ trade.get_bot_display }}</strong> &middot; {{ trade.reason }}</p>
+                    <p>
+                        {{ trade.units|floatformat:-10 }} units &middot; &euro;{{ trade.price }} per unit
+                        &middot; &euro;{{ trade.fee }} fee
+                    </p>
+                </details>
+                {% empty %}
+                <p>No orders in this period.</p>
+                {% endfor %}
+            </section>
+            {% endif %}
+        </main>
+    </div>
+</body>
+</html>

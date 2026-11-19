@@ -1,0 +1,60 @@
+<section class="lab-card" id="trade-history">
+    <h2>{{ history_title }}</h2>
+    <div class="lab-table">
+        <table>
+            <thead>
+                <tr>
+                    <th scope="col">Time (UTC)</th>
+                    <th scope="col">Account / Strategy</th>
+                    <th scope="col">Instrument</th>
+                    <th scope="col">Side</th>
+                    <th scope="col">Price per unit</th>
+                    <th scope="col">Units</th>
+                    <th scope="col">Fee</th>
+                    <th scope="col">Realized result</th>
+                    <th scope="col">Reason</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for trade in trade_page %}
+                <tr>
+                    <td>{{ trade.created|date:"Y-m-d H:i:s" }}</td>
+                    <td>
+                        <a href="{% url 'account' trade.instrument.account.pk %}">
+                            {{ trade.instrument.account.name }} #{{ trade.instrument.account.pk }}
+                        </a>
+                        <br><small>{{ trade.get_bot_display }}</small>
+                    </td>
+                    <td>{{ trade.instrument.symbol }}</td>
+                    <td><strong>{{ trade.side|upper }}</strong></td>
+                    <td>&euro;{{ trade.price|floatformat:-8 }}</td>
+                    <td>{{ trade.units|floatformat:-10 }}</td>
+                    <td>&euro;{{ trade.fee|floatformat:2 }}</td>
+                    <td>
+                        {% if trade.profit is not None %}
+                        &euro;{{ trade.profit|floatformat:2 }}
+                        {% else %}
+                        &mdash;
+                        {% endif %}
+                    </td>
+                    <td>{{ trade.reason }}</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="9">No virtual orders have been executed yet.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    {% if trade_page.has_other_pages %}
+    <nav class="lab-tabs" aria-label="Trade history pages">
+        {% if trade_page.has_previous %}
+        <a href="?trade_page={{ trade_page.previous_page_number }}{% if lab_account %}&amp;learn={{ lab_account.pk }}{% endif %}#trade-history">Previous</a>
+        {% endif %}
+        <span>Page {{ trade_page.number }} of {{ trade_page.paginator.num_pages }}</span>
+        {% if trade_page.has_next %}
+        <a href="?trade_page={{ trade_page.next_page_number }}{% if lab_account %}&amp;learn={{ lab_account.pk }}{% endif %}#trade-history">Next</a>
+        {% endif %}
+    </nav>
+    {% endif %}
+</section>

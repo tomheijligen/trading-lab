@@ -1,0 +1,133 @@
+{% with request.GET.tab|default:"overview" as tab %}
+<nav class="lab-tabs" aria-label="Dashboard tabs">
+    <a href="{% url 'dashboard' %}"
+       {% if tab == "overview" %}aria-current="page" {% endif %}>Overview</a>
+    <a href="?tab=virtual"
+       {% if tab == "virtual" %}aria-current="page" {% endif %}>Virtual Trading</a>
+    <a href="?tab=market"
+       {% if tab == "market" %}aria-current="page" {% endif %}>Market</a>
+    <a href="{% url 'all_signals' %}">Signals</a>
+    <a href="?tab=reports"
+       {% if tab == "reports" %}aria-current="page" {% endif %}>Reports</a>
+    <a href="?tab=real"
+       {% if tab == "real" %}aria-current="page" {% endif %}>Real Trading</a>
+    <a class="lab-new" href="{% url 'create_account' %}">+ New account</a>
+</nav>
+
+{% if tab == "market" %}
+<section class="lab-card">
+    <h2>Daily close history</h2>
+    <div class="lab-plot">
+        <span>Select an account below to see its market history.</span>
+    </div>
+</section>
+{% elif tab == "reports" %}
+<section class="lab-card">
+    <h2>Trade outcomes</h2>
+    <div class="lab-plot">
+        <span>Select an account below to open its reports.</span>
+    </div>
+    <p><a class="lab-header-button" href="{% url 'strategy_comparison' %}">Compare strategies</a></p>
+</section>
+{% elif tab == "real" %}
+<section class="lab-card">
+    <h2>Broker balance</h2>
+    <div class="lab-plot"><span>No broker connected</span></div>
+</section>
+{% else %}
+<div class="lab-top">
+    <div class="lab-stats">
+        <section class="lab-card lab-stat">
+            <span class="lab-icon lab-mint" aria-hidden="true">&euro;</span>
+            <h2>Account value</h2>
+            <strong>&mdash;</strong>
+            <small>Select a virtual account</small>
+        </section>
+
+        <section class="lab-card lab-stat">
+            <span class="lab-icon lab-blue" aria-hidden="true">&#9635;</span>
+            <h2>Trading cash</h2>
+            <strong>&mdash;</strong>
+            <small>Select a virtual account</small>
+        </section>
+
+        <section class="lab-card lab-stat">
+            <span class="lab-icon lab-amber" aria-hidden="true">&#9672;</span>
+            <h2>Reserved cash</h2>
+            <strong>&mdash;</strong>
+            <small>Select a virtual account</small>
+        </section>
+
+        <section class="lab-card lab-stat">
+            <span class="lab-icon lab-violet" aria-hidden="true">&#8599;</span>
+            <h2>Trading profit</h2>
+            <strong>&mdash;</strong>
+            <small>Select a virtual account</small>
+        </section>
+    </div>
+
+    <section class="lab-card">
+        <h2>Capital allocation</h2>
+        <div class="lab-allocation">
+            <div class="lab-ring">
+                <span>&mdash;<small>Allocation</small></span>
+            </div>
+            <ul class="lab-legend">
+                <li><i style="--key:#48d6aa"></i>Stocks</li>
+                <li><i style="--key:#58b7fa"></i>ETFs</li>
+                <li><i style="--key:#e8b36a"></i>Options</li>
+                <li><i style="--key:#aa90f7"></i>Crypto</li>
+                <li><i style="--key:#84909d"></i>Cash</li>
+            </ul>
+        </div>
+    </section>
+</div>
+
+{% include "trading/performance_charts.html" %}
+{% endif %}
+
+<section class="lab-card">
+    <h2>Trading accounts</h2>
+
+    <div class="lab-table">
+        <table>
+            <thead>
+                <tr>
+                    <th scope="col">Account</th>
+                    <th scope="col">Mode</th>
+                    <th scope="col">Strategy</th>
+                    <th scope="col">Open</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in accounts %}
+                {% if tab == "overview" or tab == "real" and item.mode == "real" or tab != "real" and item.mode == "virtual" %}
+                <tr>
+                    <td>{{ item.name }}</td>
+                    <td>{{ item.get_mode_display }}</td>
+                    <td>
+                        {% if item.mode == "virtual" %}
+                        {{ item.get_bot_display }}
+                        {% else %}
+                        &mdash;
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if tab == "market" %}
+                        <a class="lab-header-button" href="{% url 'market' item.pk %}">View market &#8599;</a>
+                        {% elif tab == "reports" %}
+                        <a class="lab-header-button" href="{% url 'reports' item.pk %}">View reports &#8599;</a>
+                        {% else %}
+                        <a class="lab-header-button" href="{% url 'account' item.pk %}">View account &#8599;</a>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endif %}
+                {% empty %}
+                <tr><td colspan="4">No trading accounts yet.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endwith %}
