@@ -93,3 +93,22 @@ class BotControlTests(TestCase):
         quote.side_effect = fetch
         self.assertIn("strategy changed", run_account(self.account.pk, execute=True))
         self.assertFalse(Trade.objects.exists())
+
+    @patch("trading.engine.market_snapshot")
+    def test_retry_after_worker_restart_does_not_duplicate_entry(self, quote):
+        self.account.bot = "hold"
+        self.account.automatic = True
+        self.account.save(update_fields=["bot", "automatic"])
+        self.position.units = self.position.cost = 0
+        self.position.save(update_fields=["units", "cost"])
+        now = timezone.now()
+        quote.return_value = Snapshot(
+            [[(now.date() - timedelta(days=2)).isoformat(), "105"],
+             [(now.date() - timedelta(days=1)).isoformat(), "110"]],
+            "EUR", now, Decimal("110"), True,
+        )
+        summary = run_account(self.account.pk, execute=True, scheduled=True)
+        Account.objects.filter(pk=self.account.pk).update(last_attempt=now - timedelta(minutes=20))
+        summary = run_account(self.account.pk, execute=True, scheduled=True)
+        self.position.refresh_from_db()
+        self.assertEqual(Trade.objects.filter(side="Buy").count(), 1, (summary, self.position.execution_status))

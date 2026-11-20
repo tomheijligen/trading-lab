@@ -351,15 +351,19 @@ def market_snapshot(item, fx):
                 for left, right in zip(snapshot.history, snapshot.history[1:])
             ):
                 raise DataError("Invalid market price or daily bar ordering.")
-            MarketBar.objects.bulk_create(
-                [MarketBar(
-                    provider=snapshot.provider, symbol=item.symbol,
-                    exchange=snapshot.exchange, currency=snapshot.currency,
-                    day=date.fromisoformat(day), close=price, observed_at=now,
-                ) for day, price in snapshot.history],
-                ignore_conflicts=True,
-            )
             identity = {"group": item.group, "symbol": item.symbol, "requested_exchange": item.exchange}
+            if not MarketObservation.objects.filter(
+                **identity, exchange=snapshot.exchange, provider=snapshot.provider,
+                currency=snapshot.currency, history=snapshot.history,
+            ).exists():
+                MarketBar.objects.bulk_create(
+                    [MarketBar(
+                        provider=snapshot.provider, symbol=item.symbol,
+                        exchange=snapshot.exchange, currency=snapshot.currency,
+                        day=date.fromisoformat(day), close=price, observed_at=now,
+                    ) for day, price in snapshot.history],
+                    ignore_conflicts=True,
+                )
             row, created = MarketObservation.objects.get_or_create(**identity, defaults={
                 "exchange": snapshot.exchange, "provider": snapshot.provider,
                 "currency": snapshot.currency, "price_eur": snapshot.price,
@@ -461,6 +465,7 @@ def run_account(account_id, *, execute, scheduled=False, market_cache=None):
         items = select_round_instruments(account, now.date())
         round_ids = [item.pk for item in items]
         bot_revision = account.bot_revision
+        round_started = now
 
     # Fetch quotes outside the transaction. Scheduled accounts share the cache.
     scanned = candidate_label(items)
@@ -498,6 +503,8 @@ def run_account(account_id, *, execute, scheduled=False, market_cache=None):
 
         if account.bot_revision != bot_revision:
             return "The strategy changed during this round."
+        if account.last_attempt != round_started:
+            return "A newer round superseded this round."
 
         items = list(
             account.instrument_set.exclude(group="option")
