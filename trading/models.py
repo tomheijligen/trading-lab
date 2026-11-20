@@ -255,3 +255,75 @@ class MarketObservation(models.Model):
                 name="unique_market_observation",
             )
         ]
+
+class HistoricalBar(models.Model):
+    class Quality(models.TextChoices):
+        VALID = "valid", "Valid"
+        GAP = "gap", "Missing expected session"
+        DUPLICATE = "duplicate", "Duplicate source record"
+        INVALID = "invalid", "Invalid OHLCV values"
+        SPIKE = "spike", "Extreme close-to-close move"
+        WARMUP = "warmup", "Insufficient warm-up history"
+
+    class Adjustment(models.TextChoices):
+        RAW = "raw", "Raw"
+        SPLIT = "split", "Split adjusted"
+        DIVIDEND = "dividend", "Dividend adjusted"
+        ALL = "all", "Fully adjusted"
+        NONE = "none", "Provider adjustment unknown"
+
+    provider = models.CharField(max_length=24)
+    asset_class = models.CharField(max_length=8, choices=GROUPS)
+    symbol = models.CharField(max_length=35)
+    exchange = models.CharField(max_length=35)
+    currency = models.CharField(max_length=8)
+    session_date = models.DateField()
+    observed_at = models.DateTimeField()
+    open = models.DecimalField(max_digits=24, decimal_places=8)
+    high = models.DecimalField(max_digits=24, decimal_places=8)
+    low = models.DecimalField(max_digits=24, decimal_places=8)
+    close = models.DecimalField(max_digits=24, decimal_places=8)
+    volume = models.DecimalField(max_digits=30, decimal_places=8, null=True)
+    adjustment = models.CharField(
+        max_length=12, choices=Adjustment.choices, default=Adjustment.NONE,
+    )
+    quality = models.CharField(
+        max_length=12, choices=Quality.choices, default=Quality.VALID, db_index=True,
+    )
+    quality_detail = models.CharField(max_length=240, blank=True)
+    ingested_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    "provider", "asset_class", "symbol", "exchange", "currency",
+                    "session_date", "adjustment",
+                ],
+                name="unique_historical_market_bar",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(open__gt=0) & models.Q(high__gt=0)
+                & models.Q(low__gt=0) & models.Q(close__gt=0),
+                name="historical_bar_prices_positive",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(high__gte=models.F("low"))
+                & models.Q(high__gte=models.F("open"))
+                & models.Q(high__gte=models.F("close"))
+                & models.Q(low__lte=models.F("open"))
+                & models.Q(low__lte=models.F("close")),
+                name="historical_bar_ohlc_order",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(volume__isnull=True) | models.Q(volume__gte=0),
+                name="historical_bar_volume_nonnegative",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["asset_class", "symbol", "exchange", "currency", "session_date"],
+                name="historical_bar_instrument_day",
+            ),
+            models.Index(fields=["quality", "session_date"], name="historical_bar_quality_day"),
+        ]
