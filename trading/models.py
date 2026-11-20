@@ -75,6 +75,7 @@ class Instrument(models.Model):
     entry_bar = models.DateField(null=True)
     exit_bar = models.DateField(null=True)
     stop_bar = models.DateField(null=True)
+    display_name = models.CharField(max_length=255, blank=True, default="")
 
     class Meta:
         constraints = [models.UniqueConstraint(

@@ -763,7 +763,21 @@
                         <tbody>
                             {% for position in positions %}
                             <tr>
-                                <td><strong>{{ position.instrument.symbol }}</strong></td>
+                                <td>
+                                    {% with instrument=position.instrument %}
+                                    {% if instrument.display_name %}
+                                    <strong>{{ instrument.display_name }}</strong><br>
+                                    <small class="muted">
+                                        {{ instrument.symbol }}{% if instrument.exchange %} &middot; {{ instrument.exchange }}{% endif %}
+                                    </small>
+                                    {% else %}
+                                    <strong>{{ instrument.symbol }}</strong>
+                                    {% if instrument.exchange %}
+                                    <small class="muted"> &middot; {{ instrument.exchange }}</small>
+                                    {% endif %}
+                                    {% endif %}
+                                    {% endwith %}
+                                </td>
                                 <td>{{ position.instrument.get_group_display }}</td>
                                 <td>{{ position.instrument.units|floatformat:-10 }}</td>
                                 <td>&euro;{{ position.instrument.cost|floatformat:2 }}</td>

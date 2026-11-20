@@ -33,6 +33,7 @@ class Snapshot:
     time: datetime
     price: Decimal
     market_open: bool
+    name: str = ""
 
     @property
     def bar(self):
@@ -239,12 +240,15 @@ def market_snapshot(item, fx):
             raise ValueError("Price below supported precision.")
 
         quote_timestamp = quote.get("last_quote_at") or quote["timestamp"]
+        raw_name = quote.get("name")
+        name = raw_name.strip()[:255] if isinstance(raw_name, str) else ""
         return Snapshot(
             history=history,
             currency=currency,
             time=datetime.fromtimestamp(int(quote_timestamp), tz=UTC),
             price=price,
             market_open=quote.get("is_market_open") is True,
+            name=name,
         )
     except (
         AttributeError, KeyError, TypeError, ValueError,
@@ -396,6 +400,8 @@ def run_account(account_id, *, execute, scheduled=False, market_cache=None):
             item.signal, item.explanation = signal_for(account.bot, closes)
             item.price = snapshot.price
             item.quote_time = snapshot.time
+            if snapshot.name and snapshot.name.casefold() != item.symbol.casefold():
+                item.display_name = snapshot.name
             item.save()
 
             age = (now - snapshot.time).total_seconds()

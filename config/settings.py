@@ -215,3 +215,26 @@ else:
 TEMPLATES[0]["OPTIONS"]["context_processors"].append(
     "trading.profiles.trading_navigation"
 )
+
+# Apply these overrides only to the private beta process.
+BETA_ORIGIN = os.getenv("TRADING_BETA_ORIGIN")
+if BETA_ORIGIN:
+    beta_url = urlsplit(BETA_ORIGIN)
+    if (
+        beta_url.scheme != "https"
+        or not beta_url.hostname
+        or not beta_url.hostname.endswith(".trycloudflare.com")
+        or beta_url.path
+        or beta_url.query
+        or beta_url.fragment
+    ):
+        raise RuntimeError("Use the HTTPS origin of the protected Quick Tunnel.")
+
+    DEBUG = False
+    ALLOWED_HOSTS = [beta_url.hostname]
+    CSRF_TRUSTED_ORIGINS = [BETA_ORIGIN]
+    PUBLIC_ORIGIN = BETA_ORIGIN
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    ADMIN_ROUTE_ENABLED = False
