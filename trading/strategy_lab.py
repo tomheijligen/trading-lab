@@ -179,15 +179,15 @@ def learning_result(account):
     improvement = candidate["return_pct"] - baseline["return_pct"]
 
     if candidate_training["return_pct"] <= baseline_training["return_pct"]:
-        decision = "Keep the current strategy. The alternative did not improve the training result."
+        decision = "The alternative had a lower or equal training return."
     elif min(baseline["exits"], candidate["exits"]) < MIN_VALIDATION_EXITS:
-        decision = "Not enough closed trades in validation to recommend a change."
+        decision = "There were fewer than three closed trades in at least one validation run."
     elif improvement < MIN_IMPROVEMENT:
-        decision = "Keep the current strategy. The training improvement did not hold up in validation."
+        decision = "The validation return difference was below 0.50 percentage points."
     elif candidate["drawdown_pct"] > baseline["drawdown_pct"]:
-        decision = "Keep testing. The alternative improved returns but had a larger drawdown."
+        decision = "The alternative had a higher validation return and a larger drawdown."
     else:
-        decision = f"Candidate for a separate virtual test account: {candidate['label']}."
+        decision = f"Alternative with a higher validation return: {candidate['label']}."
 
     return {
         "included": included,

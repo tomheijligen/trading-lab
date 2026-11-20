@@ -6,6 +6,7 @@ from django.urls import path
 from trading import views
 from trading import profiles
 from trading.bot_views import bot_settings
+from trading.simulation_views import simulations, simulation_export
 from trading.strategy_lab import strategy_comparison
 
 urlpatterns = [
@@ -34,6 +35,8 @@ urlpatterns = [
     ),
     path("accounts/<int:pk>/switch/", bot_settings, {"action": "switch"}, name="bot_switch"),
     path("accounts/<int:pk>/risk/", bot_settings, {"action": "risk"}, name="bot_risk"),
+    path("accounts/<int:pk>/simulations/", simulations, name="simulations"),
+    path("accounts/<int:pk>/simulations/<int:job_id>/", simulation_export, name="simulation_export"),
     path("profile/", profiles.profile_page, name="profile"),
     path("profile/avatar/", profiles.profile_avatar, name="profile_avatar"),
     path("reports/strategies/", strategy_comparison, name="strategy_comparison"),
