@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
 
 from django.conf import settings
@@ -8,7 +9,8 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from .market_data import BINANCE, DataError, twelve_data as request_data
+from .binance_stream import latest_stream_candle
+from .market_data import ALPACA, BINANCE, DataError, alpaca_headers, twelve_data as request_data
 from .models import Account, MarketBar, MarketObservation, Trade, ZERO
 from .performance import record_capital
 
@@ -255,25 +257,64 @@ def binance_snapshot(item, fx):
         "klines", {"symbol": symbol, "interval": "1d", "limit": 121}, {},
         ttl=timedelta(hours=4), weight=2,
     )
-    latest = BINANCE.fetch(
-        "klines", {"symbol": symbol, "interval": "1m", "limit": 2}, {},
-        ttl=timedelta(minutes=settings.MARKET_REFRESH_MINUTES), weight=2,
-    )
     history = [
         [datetime.fromtimestamp(row[0] / 1000, UTC).date().isoformat(),
          str(source_number(row[4]))]
         for row in rows if datetime.fromtimestamp((row[6] + 1) / 1000, UTC) <= now
     ]
-    closed = [row for row in latest if (row[6] + 1) / 1000 <= now.timestamp()]
-    if not history or not closed:
-        raise DataError("Binance returned no completed candles.")
-    row = closed[-1]
+    if not history:
+        raise DataError("Binance returned no completed daily candles.")
+    stream = latest_stream_candle(symbol) if symbol in settings.MARKET_BINANCE_STREAM_SYMBOLS else None
+    if stream:
+        timestamp, price = stream
+    else:
+        latest = BINANCE.fetch(
+            "klines", {"symbol": symbol, "interval": "1m", "limit": 2}, {},
+            ttl=timedelta(minutes=settings.MARKET_REFRESH_MINUTES), weight=2,
+        )
+        closed = [row for row in latest if (row[6] + 1) / 1000 <= now.timestamp()]
+        if not closed:
+            raise DataError("Binance returned no completed minute candles.")
+        row = closed[-1]
+        timestamp = datetime.fromtimestamp((row[6] + 1) / 1000, UTC)
+        price = source_number(row[4])
     if currency not in fx:
         fx[currency] = source_number(request_data("exchange_rate", symbol=f"{currency}/EUR")["rate"])
     return Snapshot(
-        history, currency, datetime.fromtimestamp((row[6] + 1) / 1000, UTC),
-        source_number(source_number(row[4]) * fx[currency]).quantize(TICK),
+        history, currency, timestamp,
+        source_number(price * fx[currency]).quantize(TICK),
         True, provider="Binance", exchange="Binance",
+    )
+
+
+def alpaca_snapshot(item, fx):
+    from urllib.parse import quote
+
+    symbol = quote(item.symbol, safe="")
+    today = timezone.now().astimezone(ZoneInfo("America/New_York")).date()
+    headers = alpaca_headers()
+    bars = ALPACA.fetch(
+        f"{symbol}/bars",
+        {"feed": "iex", "timeframe": "1Day", "currency": "USD", "adjustment": "split",
+         "start": (today - timedelta(days=183)).isoformat(),
+         "end": (today - timedelta(days=1)).isoformat(), "limit": 200},
+        headers, ttl=timedelta(hours=4),
+    )
+    trade = ALPACA.fetch(
+        f"{symbol}/trades/latest", {"feed": "iex", "currency": "EUR"}, headers,
+        ttl=timedelta(minutes=settings.MARKET_REFRESH_MINUTES),
+    )["trade"]
+    history = [
+        [day.isoformat(), str(source_number(row["c"]))]
+        for row in bars["bars"]
+        if (day := datetime.fromisoformat(row["t"]).astimezone(ZoneInfo("America/New_York")).date()) < today
+    ]
+    if not history:
+        raise DataError("Alpaca returned no completed IEX bars.")
+    # An IEX trade alone cannot authorize an order in the requested venue.
+    return Snapshot(
+        history, "USD", datetime.fromisoformat(trade["t"]),
+        source_number(trade["p"]).quantize(TICK), False, provider="Alpaca IEX", exchange="IEX",
     )
 
 
@@ -285,6 +326,12 @@ def market_snapshot(item, fx):
         and item.symbol.upper().split("/")[-1] in {"EUR", "USD"}
     )
     providers = [twelve_snapshot]
+    if (
+        item.group in {"stock", "etf"}
+        and item.exchange.upper() in {"NASDAQ", "NYSE", "NYSE ARCA", "NYSE AMERICAN", "IEX"}
+        and alpaca_headers()
+    ):
+        providers.append(alpaca_snapshot)
     if binance:
         providers = [binance_snapshot] if item.exchange.upper() == "BINANCE" else [
             twelve_snapshot, binance_snapshot,

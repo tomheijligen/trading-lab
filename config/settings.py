@@ -245,3 +245,8 @@ if MARKET_REFRESH_MINUTES not in {1, 5, 15}:
     raise RuntimeError("MARKET_REFRESH_MINUTES must be 1, 5 or 15.")
 MARKET_BINANCE_ENABLED = os.getenv("MARKET_BINANCE_ENABLED") == "1"
 PLATFORM_LAB_ENABLED = os.getenv("PLATFORM_LAB_ENABLED") == "1"
+
+MARKET_BINANCE_STREAM_SYMBOLS = frozenset(
+    symbol.strip() for symbol in os.getenv("MARKET_BINANCE_STREAM_SYMBOLS", "").split(",")
+    if symbol.strip()
+)

@@ -108,3 +108,14 @@ def twelve_data(endpoint, **params):
     if endpoint == "time_series":
         ttl = timedelta(hours=4)
     return TWELVE.fetch(endpoint, params, {"Authorization": f"apikey {key}"}, ttl=ttl)
+
+
+ALPACA = Provider("Alpaca IEX", "https://data.alpaca.markets/v2/stocks/", 200)
+
+
+def alpaca_headers():
+    key_id = os.getenv("APCA_API_KEY_ID")
+    secret = os.getenv("APCA_API_SECRET_KEY")
+    if not key_id or not secret:
+        return {}
+    return {"APCA-API-KEY-ID": key_id, "APCA-API-SECRET-KEY": secret}

@@ -49,3 +49,21 @@ class MarketDataTests(TestCase):
         for _ in range(2):
             self.assertEqual(market_snapshot(item, {}).provider, "Binance")
         self.assertEqual(MarketBar.objects.count(), 1)
+
+    @patch.dict("os.environ", {"APCA_API_KEY_ID": "test", "APCA_API_SECRET_KEY": "test"})
+    @patch("trading.engine.ALPACA.fetch")
+    @patch("trading.engine.twelve_snapshot", side_effect=DataError("unavailable"))
+    def test_iex_fallback_is_research_only(self, _twelve, fetch):
+        now = timezone.now()
+        previous = now - timedelta(days=2)
+        fetch.side_effect = [
+            {"bars": [{"t": previous.isoformat(), "c": "120"}]},
+            {"trade": {"t": now.isoformat(), "p": "100"}},
+        ]
+        item = SimpleNamespace(symbol="AAPL", exchange="NASDAQ", group="stock")
+        snapshot = market_snapshot(item, {})
+        self.assertEqual(snapshot.provider, "Alpaca IEX")
+        self.assertEqual(snapshot.currency, "USD")
+        self.assertEqual(snapshot.price, Decimal("100"))
+        self.assertFalse(snapshot.market_open)
+        self.assertEqual(fetch.call_args.args[1]["currency"], "EUR")

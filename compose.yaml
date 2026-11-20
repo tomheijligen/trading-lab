@@ -80,6 +80,16 @@ services:
       timeout: 5s
       retries: 3
 
+  market_stream:
+    <<: *app
+    profiles: ["stream"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    command: ["python", "manage.py", "run_market_stream"]
+    restart: unless-stopped
+    mem_limit: 128m
+    cpus: 0.25
+
   proxy:
     image: caddy:2
     depends_on:

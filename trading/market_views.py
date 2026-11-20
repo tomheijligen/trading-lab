@@ -8,7 +8,7 @@ from django.utils import timezone
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_GET
 
-from .market_data import BINANCE, TWELVE
+from .market_data import ALPACA, BINANCE, TWELVE, alpaca_headers
 from .models import ProviderUsage
 from .scanner import rank_observations, scanner_universe
 from .views import page
@@ -45,6 +45,7 @@ def providers(request):
     for provider, enabled in (
         (TWELVE, bool(os.getenv("TWELVE_DATA_API_KEY"))),
         (BINANCE, settings.MARKET_BINANCE_ENABLED),
+        (ALPACA, bool(alpaca_headers())),
     ):
         usage = ProviderUsage.objects.filter(pk=provider.name).first()
         providers.append({
