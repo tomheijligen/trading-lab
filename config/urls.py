@@ -3,6 +3,7 @@ from django.contrib import admin
 from django.contrib.auth import views as auth
 from django.urls import path
 
+from config.health import health
 from trading import views
 from trading import profiles
 from trading.bot_views import bot_settings
@@ -11,6 +12,7 @@ from trading.simulation_views import simulations, simulation_export
 from trading.strategy_lab import strategy_comparison
 
 urlpatterns = [
+    path("healthz/", health, name="health"),
     path("", views.dashboard, name="dashboard"),
     path("sign-in/", auth.LoginView.as_view(
         template_name="trading/page.html",

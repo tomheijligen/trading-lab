@@ -1,0 +1,103 @@
+x-app: &app
+  image: trading-lab:local
+  build: .
+  env_file: ${TRADING_ENV_FILE:-.env}
+  environment:
+    PGHOST: db
+    PGPORT: "5432"
+    TRADING_LOCAL: "0"
+    TRADING_PRIVATE_POSTGRES: "1"
+    TRUST_HTTPS_PROXY: "1"
+  init: true
+  logging:
+    options: {max-size: "10m", max-file: "3"}
+
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: ${PGDATABASE:?set PGDATABASE}
+      POSTGRES_USER: ${PGUSER:?set PGUSER}
+      POSTGRES_PASSWORD: ${PGPASSWORD:?set PGPASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql
+    restart: unless-stopped
+    mem_limit: 1g
+    cpus: 1
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  migrate:
+    <<: *app
+    depends_on:
+      db: {condition: service_healthy}
+    command: ["sh", "-ec", "python manage.py migrate --noinput && python manage.py collectstatic --noinput"]
+    volumes:
+      - static:/app/staticfiles
+
+  web:
+    <<: *app
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import Request,urlopen; urlopen(Request('http://127.0.0.1:8000/healthz/',headers={'Host':__import__('os').environ['TRADING_PUBLIC_ORIGIN'].split('/')[2].split(':')[0]}),timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  paper:
+    <<: *app
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    command: ["python", "manage.py", "run_worker", "paper", "--heartbeat", "/tmp/trading-heartbeat"]
+    restart: unless-stopped
+    mem_limit: 384m
+    cpus: 0.75
+    healthcheck:
+      test: ["CMD", "python", "-c", "from pathlib import Path; from time import time; assert time()-Path('/tmp/trading-heartbeat').stat().st_mtime<1200"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 20m
+
+  simulation:
+    <<: *app
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    command: ["python", "manage.py", "run_worker", "simulation", "--heartbeat", "/tmp/trading-heartbeat"]
+    restart: unless-stopped
+    mem_limit: 384m
+    cpus: 0.5
+    healthcheck:
+      test: ["CMD", "python", "-c", "from pathlib import Path; from time import time; assert time()-Path('/tmp/trading-heartbeat').stat().st_mtime<120"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  proxy:
+    image: caddy:2
+    depends_on:
+      web: {condition: service_healthy}
+    environment:
+      TRADING_HOST: ${TRADING_HOST:?set TRADING_HOST}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - static:/srv/static:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
+
+volumes:
+  pgdata:
+  static:
+  caddy_data:
+  caddy_config:

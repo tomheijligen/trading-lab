@@ -83,7 +83,7 @@ DATABASES = {
         "PORT": os.getenv("PGPORT", "5432"),
         "OPTIONS": (
             {}
-            if os.getenv("TRADING_LOCAL") == "1"
+            if os.getenv("TRADING_LOCAL") == "1" or os.getenv("TRADING_PRIVATE_POSTGRES") == "1"
             else {
                 "sslmode": "verify-full",
                 "sslrootcert": os.environ["PGSSLROOTCERT"],
@@ -162,7 +162,7 @@ DATABASES = {"default": {
     "PASSWORD": os.environ["PGPASSWORD"],
     "HOST": os.getenv("PGHOST", "127.0.0.1"),
     "PORT": os.getenv("PGPORT", "5432"),
-    "OPTIONS": {} if LOCAL else {
+    "OPTIONS": {} if LOCAL or os.getenv("TRADING_PRIVATE_POSTGRES") == "1" else {
         "sslmode": "verify-full",
         "sslrootcert": os.environ["PGSSLROOTCERT"],
     },
@@ -182,6 +182,7 @@ TIME_ZONE = "UTC"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 SECURE_SSL_REDIRECT = not LOCAL
+SECURE_REDIRECT_EXEMPT = [r"^healthz/$"]
 SECURE_HSTS_SECONDS = 300 if not LOCAL else 0
 SESSION_COOKIE_SECURE = not LOCAL
 CSRF_COOKIE_SECURE = not LOCAL

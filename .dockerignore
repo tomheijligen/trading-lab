@@ -1,0 +1,13 @@
+.git
+.env*
+.venv
+env
+.vs
+.python-runtime*
+.recovery-*
+**/__pycache__
+*.sqlite3
+*.dump
+*.backup
+staticfiles
+trading_draft

@@ -405,8 +405,9 @@ def run_account(account_id, *, execute, scheduled=False, market_cache=None):
             return "Automatic rounds are paused."
 
         now = timezone.now()
-        if account.last_attempt and now - account.last_attempt < timedelta(minutes=2):
-            return "Please wait two minutes between market requests for this account."
+        cooldown = settings.MARKET_REFRESH_MINUTES if scheduled else 2
+        if account.last_attempt and now - account.last_attempt < timedelta(minutes=cooldown):
+            return f"Please wait {cooldown} minute(s) between market requests for this account."
 
         account.last_attempt = now
         account.save(update_fields=["last_attempt"])

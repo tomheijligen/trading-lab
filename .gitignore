@@ -9,6 +9,7 @@ __pycache__/
 *.sqlite3
 *.dump
 *.backup
-staticfiles/.recovery-*/
+staticfiles/
+.recovery-*/
 .python-runtime/
 .python-runtime.zip
