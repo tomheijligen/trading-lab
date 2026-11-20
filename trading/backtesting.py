@@ -99,6 +99,10 @@ def calculate(job):
         return replay(bot, histories, start, end, job.capital, fee, impact)
 
     rows = [{"bot": label, **run(bot, job.start, job.end)} for bot, label in BOTS]
+    if job.paper_reference:
+        gain = Decimal(job.paper_reference["gain"])
+        for row in rows:
+            row["difference"] = float(Decimal(str(row["gain"])) - gain)
     validation = []
     span = (job.end - job.start).days + 1
     if span >= 90:

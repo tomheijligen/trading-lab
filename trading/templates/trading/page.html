@@ -674,6 +674,7 @@
             </section>
             {% endif %}
 
+            {% include "trading/paper_metrics.html" %}
             {% if platform_lab %}
             <p><a href="{% url 'bot_switch' account.pk %}">Switch strategy</a>
                 &middot; <a href="{% url 'bot_risk' account.pk %}">Risk limits</a>
@@ -707,16 +708,23 @@
                 {% if job.error %}<p>{{ job.error }}</p>{% endif %}
                 {% if job.status == "done" %}
                 <p><a href="{% url 'simulation_export' account.pk job.pk %}">Export results and equity curves</a></p>
+                {% if job.paper_reference %}
+                <p>Recorded paper gain: EUR {{ job.paper_reference.gain }} ({{ job.paper_reference.bot }}).
+                    Paper marks: {{ job.paper_reference.start }} to {{ job.paper_reference.end }}.
+                    Each simulation starts in cash equal to the first paper mark.</p>
+                {% endif %}
                 <p>Instruments: {{ job.inputs|length }}. Fees {{ job.fee_bps }} bps,
                     spread {{ job.spread_bps }} bps, slippage {{ job.slippage_bps }} bps.</p>
                 <div class="table-scroll"><table>
                     <thead><tr><th>Strategy</th><th>Gain (EUR)</th><th>Return %</th><th>Drawdown %</th>
-                        <th>Orders</th><th>Win %</th><th>Fees (EUR)</th><th>Annualized Sharpe</th></tr></thead>
+                        <th>Orders</th><th>Win %</th><th>Fees (EUR)</th><th>Annualized Sharpe</th>
+                        {% if job.paper_reference %}<th>Difference vs paper EUR</th>{% endif %}</tr></thead>
                     <tbody>{% for result in job.result.strategies %}
                     <tr><td>{{ result.bot }}</td><td>{{ result.gain|floatformat:2 }}</td>
                         <td>{{ result.return_pct|floatformat:2 }}</td><td>{{ result.drawdown|floatformat:2 }}</td>
                         <td>{{ result.orders }}</td><td>{{ result.win_rate|default_if_none:"Unavailable"|floatformat:2 }}</td>
-                        <td>{{ result.fees|floatformat:2 }}</td><td>{{ result.sharpe|default_if_none:"Unavailable"|floatformat:2 }}</td></tr>
+                        <td>{{ result.fees|floatformat:2 }}</td><td>{{ result.sharpe|floatformat:2|default:"Unavailable" }}</td>
+                        {% if job.paper_reference %}<td>{{ result.difference|floatformat:2 }}</td>{% endif %}</tr>
                     {% endfor %}</tbody>
                 </table></div>
                 {% if job.result.validation %}

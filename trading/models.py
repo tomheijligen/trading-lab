@@ -226,6 +226,7 @@ class Simulation(models.Model):
     spread_bps = models.PositiveSmallIntegerField(default=10)
     slippage_bps = models.PositiveSmallIntegerField(default=5)
     inputs = models.JSONField(default=dict)
+    paper_reference = models.JSONField(default=dict)
     result = models.JSONField(default=dict)
     status = models.CharField(max_length=8, default="queued", db_index=True)
     error = models.CharField(max_length=240, blank=True)

@@ -36,6 +36,7 @@ from .models import (
     ReportSubscription,
     Trade,
 )
+from .paper_metrics import paper_windows, strategy_periods
 from .performance import order_history, performance_charts
 
 
@@ -208,6 +209,8 @@ def account_page(request, pk):
         deposit_form=DepositForm(),
         show_positions=is_virtual,
         platform_lab=is_virtual and settings.PLATFORM_LAB_ENABLED,
+        paper_windows=paper_windows(account) if is_virtual and settings.PLATFORM_LAB_ENABLED else [],
+        strategy_periods=strategy_periods(account) if is_virtual and settings.PLATFORM_LAB_ENABLED else [],
         positions=positions,
         charts=performance_charts(request.user, account.pk) if is_virtual else [],
         chart_scope=account.name,
