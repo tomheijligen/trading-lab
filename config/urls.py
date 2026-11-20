@@ -6,6 +6,7 @@ from django.urls import path
 from trading import views
 from trading import profiles
 from trading.bot_views import bot_settings
+from trading.market_views import providers, scanner
 from trading.simulation_views import simulations, simulation_export
 from trading.strategy_lab import strategy_comparison
 
@@ -37,6 +38,8 @@ urlpatterns = [
     path("accounts/<int:pk>/risk/", bot_settings, {"action": "risk"}, name="bot_risk"),
     path("accounts/<int:pk>/simulations/", simulations, name="simulations"),
     path("accounts/<int:pk>/simulations/<int:job_id>/", simulation_export, name="simulation_export"),
+    path("research/scanner/", scanner, name="market_scanner"),
+    path("research/providers/", providers, name="market_providers"),
     path("profile/", profiles.profile_page, name="profile"),
     path("profile/avatar/", profiles.profile_avatar, name="profile_avatar"),
     path("reports/strategies/", strategy_comparison, name="strategy_comparison"),

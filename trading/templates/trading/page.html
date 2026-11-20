@@ -690,6 +690,13 @@
                 </ul>
             </section>
             {% endif %}
+            {% if market_research %}
+            <p><a href="{% url 'market_scanner' %}">Market scanner</a>
+                {% if user.is_staff %}&middot; <a href="{% url 'market_providers' %}">Provider status</a>{% endif %}</p>
+            {% endif %}
+            {% if market_scanner or market_providers %}
+                {% include "trading/market_research.html" %}
+            {% endif %}
             {% if historical_simulations %}
             <p>Compare strategies over the same dates with the same starting capital. This uses stored
                 EUR prices from the current watchlist. Missing and delisted instruments may bias the results.

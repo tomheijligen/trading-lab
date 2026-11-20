@@ -137,6 +137,7 @@ def dashboard(request):
         "Your trading accounts",
         accounts=accounts,
         dashboard=True,
+        market_research=settings.PLATFORM_LAB_ENABLED,
         charts=performance_charts(request.user),
         chart_scope="All virtual accounts",
     )

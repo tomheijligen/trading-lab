@@ -9,7 +9,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from .market_data import BINANCE, DataError, twelve_data as request_data
-from .models import Account, MarketBar, Trade, ZERO
+from .models import Account, MarketBar, MarketObservation, Trade, ZERO
 from .performance import record_capital
 
 
@@ -29,6 +29,7 @@ class Snapshot:
     name: str = ""
     provider: str = "Twelve Data"
     exchange: str = ""
+    volume: Decimal | None = None
 
     @property
     def bar(self):
@@ -177,6 +178,16 @@ def signal_for(bot, closes):
     return signal, reason
 
 
+def optional_volume(raw):
+    try:
+        value = Decimal(str(raw))
+        if value.is_finite() and ZERO <= value < Decimal("1e22"):
+            return value
+    except InvalidOperation:
+        pass
+    return None
+
+
 def twelve_snapshot(item, fx):
     params = {"symbol": item.symbol}
     if item.exchange:
@@ -224,7 +235,8 @@ def twelve_snapshot(item, fx):
             price=price,
             market_open=quote.get("is_market_open") is True,
             name=name,
-            exchange=item.exchange or str(series["meta"].get("exchange") or "")[:35],
+            exchange=str(series["meta"].get("exchange") or item.exchange)[:35],
+            volume=optional_volume(quote.get("volume")),
         )
     except (
         AttributeError, KeyError, TypeError, ValueError,
@@ -300,6 +312,20 @@ def market_snapshot(item, fx):
                 ) for day, price in snapshot.history],
                 ignore_conflicts=True,
             )
+            identity = {"group": item.group, "symbol": item.symbol, "requested_exchange": item.exchange}
+            row, created = MarketObservation.objects.get_or_create(**identity, defaults={
+                "exchange": snapshot.exchange, "provider": snapshot.provider,
+                "currency": snapshot.currency, "price_eur": snapshot.price,
+                "quote_time": snapshot.time, "received_at": now,
+                "market_open": snapshot.market_open, "history": snapshot.history,
+                "volume": snapshot.volume,
+            })
+            if not created:
+                MarketObservation.objects.filter(pk=row.pk, quote_time__lte=snapshot.time).update(
+                    exchange=snapshot.exchange, provider=snapshot.provider, currency=snapshot.currency,
+                    price_eur=snapshot.price, quote_time=snapshot.time, received_at=now,
+                    market_open=snapshot.market_open, history=snapshot.history, volume=snapshot.volume,
+                )
             return snapshot
         except DataError as error:
             last_error = error

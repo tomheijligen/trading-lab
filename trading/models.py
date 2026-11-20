@@ -230,3 +230,27 @@ class Simulation(models.Model):
     status = models.CharField(max_length=8, default="queued", db_index=True)
     error = models.CharField(max_length=240, blank=True)
     created = models.DateTimeField(auto_now_add=True)
+
+
+class MarketObservation(models.Model):
+    group = models.CharField(max_length=8)
+    symbol = models.CharField(max_length=35)
+    requested_exchange = models.CharField(max_length=35)
+    exchange = models.CharField(max_length=35)
+    provider = models.CharField(max_length=24)
+    currency = models.CharField(max_length=8)
+    price_eur = models.DecimalField(max_digits=24, decimal_places=8)
+    quote_time = models.DateTimeField()
+    received_at = models.DateTimeField()
+    market_open = models.BooleanField()
+    history = models.JSONField(default=list)
+    volume = models.DecimalField(max_digits=30, decimal_places=8, null=True)
+    spread_bps = models.DecimalField(max_digits=12, decimal_places=4, null=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["group", "symbol", "requested_exchange"],
+                name="unique_market_observation",
+            )
+        ]
