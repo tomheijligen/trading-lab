@@ -206,6 +206,7 @@ def account_page(request, pk):
         deposits=deposits[:30],
         deposit_form=DepositForm(),
         show_positions=is_virtual,
+        platform_lab=is_virtual and settings.PLATFORM_LAB_ENABLED,
         positions=positions,
         charts=performance_charts(request.user, account.pk) if is_virtual else [],
         chart_scope=account.name,

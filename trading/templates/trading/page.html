@@ -674,6 +674,21 @@
             </section>
             {% endif %}
 
+            {% if platform_lab %}
+            <p><a href="{% url 'bot_switch' account.pk %}">Switch strategy</a>
+                &middot; <a href="{% url 'bot_risk' account.pk %}">Risk limits</a></p>
+            {% endif %}
+            {% if bot_switches %}
+            <section>
+                <h2>Strategy changes</h2>
+                <ul>
+                {% for change in bot_switches %}
+                    <li>{{ change.created }} &middot; {{ change.previous_bot }} &rarr; {{ change.new_bot }}
+                        &middot; {{ change.treatment }} &middot; EUR {{ change.value }}</li>
+                {% endfor %}
+                </ul>
+            </section>
+            {% endif %}
             {% if form %}
             <section class="lab-card">
                 <form method="post">

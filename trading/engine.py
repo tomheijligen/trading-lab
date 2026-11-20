@@ -386,6 +386,7 @@ def run_account(account_id, *, execute, scheduled=False, market_cache=None):
         account.save(update_fields=["last_attempt"])
         items = select_round_instruments(account, now.date())
         round_ids = [item.pk for item in items]
+        bot_revision = account.bot_revision
 
     # Fetch quotes outside the transaction. Scheduled accounts share the cache.
     scanned = candidate_label(items)
@@ -421,6 +422,9 @@ def run_account(account_id, *, execute, scheduled=False, market_cache=None):
         if scheduled and not account.automatic:
             return "Automatic rounds are paused."
 
+        if account.bot_revision != bot_revision:
+            return "The strategy changed during this round."
+
         items = list(
             account.instrument_set.exclude(group="option")
             .filter(Q(pk__in=round_ids) | Q(units__gt=ZERO))
@@ -449,6 +453,7 @@ def run_account(account_id, *, execute, scheduled=False, market_cache=None):
             item.signal, item.explanation = signal_for(account.bot, closes)
             item.price = snapshot.price
             item.quote_time = snapshot.time
+            item.quote_market_open = snapshot.market_open
             if snapshot.name and snapshot.name.casefold() != item.symbol.casefold():
                 item.display_name = snapshot.name
             item.save()
@@ -498,11 +503,16 @@ def apply_signals(account, items, eligible, *, execution=None):
     if execution is None:
         execution = {}
 
+    from .bot_control import deployment_budget
+
     count = 0
     sold_this_round = set()
 
     # Process exits first so the proceeds are available for later buys.
     for item, snap in eligible:
+        if not item.bot_managed and item.units:
+            execution[item.pk] = "Position held outside this strategy"
+            continue
         if item.stop_bar and item.signal == "sell" and snap.bar > item.stop_bar:
             item.stop_bar = None
 
@@ -543,11 +553,14 @@ def apply_signals(account, items, eligible, *, execution=None):
 
         item.save()
 
-    all_quotes_eligible = len(eligible) == len(items)
+    eligible_ids = {item.pk for item, _ in eligible}
+    all_quotes_eligible = all(
+        item.pk in eligible_ids for item in items if item.bot_managed or not item.units
+    )
 
     # Preserve the existing requirement that all selected quotes qualify for buys.
     for item, snap in eligible:
-        if item.pk in sold_this_round:
+        if item.pk in sold_this_round or (item.units and not item.bot_managed):
             continue
         if item.signal == "hold":
             execution[item.pk] = "Hold: strategy is waiting"
@@ -588,6 +601,12 @@ def apply_signals(account, items, eligible, *, execution=None):
         target = equity * allocation / 100
         remaining = target - sum(peer.value for peer in group)
         budget = min(account.cash, target / len(group), remaining)
+        if account.max_position_pct < 100 or account.max_exposure_pct < 100 or account.max_loss_pct:
+            position_limit, exposure_headroom = deployment_budget(account, items)
+            budget = min(budget, position_limit, exposure_headroom)
+            if budget < 1:
+                execution[item.pk] = "Buy blocked by account risk limits"
+                continue
 
         if budget < 1:
             execution[item.pk] = (

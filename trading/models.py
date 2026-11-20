@@ -73,6 +73,7 @@ class Instrument(models.Model):
     execution_checked_at = models.DateTimeField(null=True, blank=True)
     price = models.DecimalField(max_digits=24, decimal_places=8, null=True)
     quote_time = models.DateTimeField(null=True)
+    quote_market_open = models.BooleanField(default=False)
     units = models.DecimalField(max_digits=30, decimal_places=10, default=ZERO)
     cost = models.DecimalField(max_digits=18, decimal_places=2, default=ZERO)
     peak = models.DecimalField(max_digits=24, decimal_places=8, default=ZERO)
