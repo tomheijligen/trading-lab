@@ -1,18 +1,15 @@
-import json
-import os
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
-from urllib.error import URLError
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from .models import Account, Trade, ZERO
+from .market_data import BINANCE, DataError, twelve_data as request_data
+from .models import Account, MarketBar, Trade, ZERO
 from .performance import record_capital
 
 
@@ -20,10 +17,6 @@ CENT = Decimal("0.01")
 TICK = Decimal("0.00000001")
 UNIT = Decimal("0.0000000001")
 FEE = Decimal("0.002")
-
-
-class DataError(Exception):
-    pass
 
 
 @dataclass(frozen=True)
@@ -34,6 +27,8 @@ class Snapshot:
     price: Decimal
     market_open: bool
     name: str = ""
+    provider: str = "Twelve Data"
+    exchange: str = ""
 
     @property
     def bar(self):
@@ -182,27 +177,7 @@ def signal_for(bot, closes):
     return signal, reason
 
 
-def request_data(endpoint, **params):
-    api_key = os.getenv("TWELVE_DATA_API_KEY")
-    if not api_key:
-        raise DataError("Set TWELVE_DATA_API_KEY to fetch market data.")
-
-    request = Request(
-        f"https://api.twelvedata.com/{endpoint}?{urlencode(params)}",
-        headers={"Authorization": f"apikey {api_key}"},
-    )
-    try:
-        with urlopen(request, timeout=6) as response:
-            result = json.loads(response.read(500_000))
-    except (URLError, TimeoutError, ValueError):
-        raise DataError("The market data request failed.") from None
-
-    if not isinstance(result, dict) or result.get("status") == "error":
-        raise DataError("Check the symbol, exchange, and data permissions.")
-    return result
-
-
-def market_snapshot(item, fx):
+def twelve_snapshot(item, fx):
     params = {"symbol": item.symbol}
     if item.exchange:
         params["exchange"] = item.exchange
@@ -249,6 +224,7 @@ def market_snapshot(item, fx):
             price=price,
             market_open=quote.get("is_market_open") is True,
             name=name,
+            exchange=item.exchange or str(series["meta"].get("exchange") or "")[:35],
         )
     except (
         AttributeError, KeyError, TypeError, ValueError,
@@ -257,6 +233,79 @@ def market_snapshot(item, fx):
         raise DataError(
             "The provider returned incomplete or invalid market data."
         ) from None
+
+
+def binance_snapshot(item, fx):
+    base, currency = item.symbol.upper().split("/")
+    symbol = base + currency
+    now = timezone.now()
+    rows = BINANCE.fetch(
+        "klines", {"symbol": symbol, "interval": "1d", "limit": 121}, {},
+        ttl=timedelta(hours=4), weight=2,
+    )
+    latest = BINANCE.fetch(
+        "klines", {"symbol": symbol, "interval": "1m", "limit": 2}, {},
+        ttl=timedelta(minutes=settings.MARKET_REFRESH_MINUTES), weight=2,
+    )
+    history = [
+        [datetime.fromtimestamp(row[0] / 1000, UTC).date().isoformat(),
+         str(source_number(row[4]))]
+        for row in rows if datetime.fromtimestamp((row[6] + 1) / 1000, UTC) <= now
+    ]
+    closed = [row for row in latest if (row[6] + 1) / 1000 <= now.timestamp()]
+    if not history or not closed:
+        raise DataError("Binance returned no completed candles.")
+    row = closed[-1]
+    if currency not in fx:
+        fx[currency] = source_number(request_data("exchange_rate", symbol=f"{currency}/EUR")["rate"])
+    return Snapshot(
+        history, currency, datetime.fromtimestamp((row[6] + 1) / 1000, UTC),
+        source_number(source_number(row[4]) * fx[currency]).quantize(TICK),
+        True, provider="Binance", exchange="Binance",
+    )
+
+
+def market_snapshot(item, fx):
+    binance = (
+        settings.MARKET_BINANCE_ENABLED and item.group == "crypto"
+        and item.exchange.upper() in {"", "BINANCE"}
+        and item.symbol.upper().count("/") == 1
+        and item.symbol.upper().split("/")[-1] in {"EUR", "USD"}
+    )
+    providers = [twelve_snapshot]
+    if binance:
+        providers = [binance_snapshot] if item.exchange.upper() == "BINANCE" else [
+            twelve_snapshot, binance_snapshot,
+        ]
+    last_error = None
+    for provider in providers:
+        try:
+            snapshot = provider(item, fx)
+            now = timezone.now()
+            if snapshot.time > now or (
+                (snapshot.market_open or item.group == "crypto")
+                and now - snapshot.time > timedelta(minutes=30)
+            ):
+                raise DataError("Market quote timestamp is outside the accepted window.")
+            if snapshot.price <= ZERO or any(
+                left[0] >= right[0]
+                for left, right in zip(snapshot.history, snapshot.history[1:])
+            ):
+                raise DataError("Invalid market price or daily bar ordering.")
+            MarketBar.objects.bulk_create(
+                [MarketBar(
+                    provider=snapshot.provider, symbol=item.symbol,
+                    exchange=snapshot.exchange, currency=snapshot.currency,
+                    day=date.fromisoformat(day), close=price, observed_at=now,
+                ) for day, price in snapshot.history],
+                ignore_conflicts=True,
+            )
+            return snapshot
+        except DataError as error:
+            last_error = error
+        except (KeyError, IndexError, TypeError, ValueError, InvalidOperation, OverflowError, OSError):
+            last_error = DataError("The provider returned incomplete or invalid market data.")
+    raise last_error
 
 
 def record_trade(item, account, side, price, units, fee, reason, profit=None):
@@ -395,7 +444,7 @@ def run_account(account_id, *, execute, scheduled=False, market_cache=None):
 
             item.history = snapshot.history
             item.currency = snapshot.currency
-            item.source = "Market provider"
+            item.source = snapshot.provider
             closes = [Decimal(row[1]) for row in snapshot.history]
             item.signal, item.explanation = signal_for(account.bot, closes)
             item.price = snapshot.price

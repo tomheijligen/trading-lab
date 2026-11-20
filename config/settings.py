@@ -238,3 +238,9 @@ if BETA_ORIGIN:
     CSRF_COOKIE_SECURE = True
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
     ADMIN_ROUTE_ENABLED = False
+# Shared provider requests and alternate market data venue.
+MARKET_REFRESH_MINUTES = int(os.getenv("MARKET_REFRESH_MINUTES", "5"))
+if MARKET_REFRESH_MINUTES not in {1, 5, 15}:
+    raise RuntimeError("MARKET_REFRESH_MINUTES must be 1, 5 or 15.")
+MARKET_BINANCE_ENABLED = os.getenv("MARKET_BINANCE_ENABLED") == "1"
+PLATFORM_LAB_ENABLED = os.getenv("PLATFORM_LAB_ENABLED") == "1"

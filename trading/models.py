@@ -47,6 +47,10 @@ class Account(models.Model):
     automatic = models.BooleanField(default=False)
     auto_discovery = models.BooleanField(default=False)
     last_attempt = models.DateTimeField(null=True)
+    bot_revision = models.PositiveIntegerField(default=0)
+    max_position_pct = models.PositiveSmallIntegerField(default=100)
+    max_exposure_pct = models.PositiveSmallIntegerField(default=100)
+    max_loss_pct = models.PositiveSmallIntegerField(default=0)
 
 
 class Instrument(models.Model):
@@ -76,6 +80,7 @@ class Instrument(models.Model):
     exit_bar = models.DateField(null=True)
     stop_bar = models.DateField(null=True)
     display_name = models.CharField(max_length=255, blank=True, default="")
+    bot_managed = models.BooleanField(default=True)
 
     class Meta:
         constraints = [models.UniqueConstraint(
@@ -164,3 +169,63 @@ class CapitalSnapshot(models.Model):
         indexes = [
             models.Index(fields=["account", "captured_at"]),
         ]
+
+class MarketCache(models.Model):
+    key = models.CharField(max_length=64, unique=True)
+    provider = models.CharField(max_length=24)
+    payload = models.JSONField(null=True)
+    fetched_at = models.DateTimeField(null=True)
+    retry_at = models.DateTimeField(null=True)
+
+
+class ProviderUsage(models.Model):
+    provider = models.CharField(max_length=24, primary_key=True)
+    minute = models.DateTimeField(null=True)
+    day = models.DateField(null=True)
+    minute_credits = models.PositiveIntegerField(default=0)
+    day_credits = models.PositiveIntegerField(default=0)
+    last_success = models.DateTimeField(null=True)
+    last_failure = models.DateTimeField(null=True)
+    blocked_until = models.DateTimeField(null=True)
+
+
+class MarketBar(models.Model):
+    provider = models.CharField(max_length=24)
+    symbol = models.CharField(max_length=35)
+    exchange = models.CharField(max_length=35)
+    currency = models.CharField(max_length=8)
+    day = models.DateField()
+    close = models.DecimalField(max_digits=24, decimal_places=8)
+    observed_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["provider", "symbol", "exchange", "currency", "day"],
+                name="unique_provider_daily_bar",
+            )
+        ]
+
+
+class BotSwitch(models.Model):
+    account = models.ForeignKey(Account, on_delete=models.CASCADE)
+    previous_bot = models.CharField(max_length=12)
+    new_bot = models.CharField(max_length=12)
+    treatment = models.CharField(max_length=12)
+    value = models.DecimalField(max_digits=18, decimal_places=2)
+    created = models.DateTimeField(auto_now_add=True)
+
+
+class Simulation(models.Model):
+    account = models.ForeignKey(Account, on_delete=models.CASCADE)
+    start = models.DateField()
+    end = models.DateField()
+    capital = models.DecimalField(max_digits=18, decimal_places=2)
+    fee_bps = models.PositiveSmallIntegerField(default=20)
+    spread_bps = models.PositiveSmallIntegerField(default=10)
+    slippage_bps = models.PositiveSmallIntegerField(default=5)
+    inputs = models.JSONField(default=dict)
+    result = models.JSONField(default=dict)
+    status = models.CharField(max_length=8, default="queued", db_index=True)
+    error = models.CharField(max_length=240, blank=True)
+    created = models.DateTimeField(auto_now_add=True)
