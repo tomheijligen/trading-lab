@@ -204,7 +204,7 @@ def store_bars(*, provider, asset_class, symbol, exchange, currency, adjustment,
     return result
 
 
-def _warmup_sessions(start, calendar):
+def warmup_sessions(start, calendar):
     # Limit the search in case the calendar has no session data for this period.
     days = []
     for offset in range(1, min(366, (start - date.min).days) + 1):
@@ -213,11 +213,11 @@ def _warmup_sessions(start, calendar):
             days.append(day)
             if len(days) == WARMUP_SESSIONS:
                 break
-    return days
+    return sorted(days)
 
 
 def inspect_coverage(*, provider, asset_class, symbol, exchange, currency, adjustment,
-                     end_date=None, calendar=None):
+                     end_date=None, calendar=None, start_date=None):
     """Report coverage for one exact series using the caller's venue calendar."""
     _check_metadata(provider, asset_class, symbol, exchange, currency, adjustment)
     end_date = end_date or timezone.localdate()
@@ -225,9 +225,15 @@ def inspect_coverage(*, provider, asset_class, symbol, exchange, currency, adjus
         "provider": provider, "asset_class": asset_class, "symbol": symbol,
         "exchange": exchange, "currency": currency, "adjustment": adjustment,
     }
-    qualities_by_day = dict(HistoricalBar.objects.filter(
+    series = HistoricalBar.objects.filter(
         **identity, session_date__lte=end_date,
-    ).values_list("session_date", "quality"))
+    )
+    if start_date is not None:
+        if start_date > end_date:
+            raise ValueError("Coverage start date must be on or before its end date.")
+        preceding = warmup_sessions(start_date, calendar) if calendar is not None else []
+        series = series.filter(session_date__gte=preceding[0] if preceding else start_date)
+    qualities_by_day = dict(series.values_list("session_date", "quality"))
     valid_days = {
         day for day, quality in qualities_by_day.items()
         if quality == HistoricalBar.Quality.VALID
@@ -241,10 +247,13 @@ def inspect_coverage(*, provider, asset_class, symbol, exchange, currency, adjus
     for quality in qualities_by_day.values():
         report["quality_counts"][quality] += 1
 
-    for days in SIMULATION_WINDOWS:
-        start = end_date - timedelta(days=days)
+    windows = (
+        {"requested": start_date} if start_date is not None else
+        {days: end_date - timedelta(days=days) for days in SIMULATION_WINDOWS}
+    )
+    for key, start in windows.items():
         period = expected_sessions(start, end_date, calendar) if calendar is not None else []
-        warmup = _warmup_sessions(start, calendar) if calendar is not None else []
+        warmup = warmup_sessions(start, calendar) if calendar is not None else []
         missing = [day.isoformat() for day in period if day not in qualities_by_day]
         rejected = [
             day.isoformat() for day in period
@@ -253,7 +262,7 @@ def inspect_coverage(*, provider, asset_class, symbol, exchange, currency, adjus
         warmup_unusable = sorted(day.isoformat() for day in warmup if day not in valid_days)
         warmup_ready = len(warmup) == WARMUP_SESSIONS and not warmup_unusable
         available = sum(start <= day <= end_date for day in valid_days)
-        report["windows"][days] = {
+        report["windows"][key] = {
             "start_date": start.isoformat(),
             "available_bars": available,
             "expected_bars": len(period) if calendar is not None else None,

@@ -316,6 +316,34 @@ A scheduler must run this command periodically for automatic delivery. In
 `TRADING_LOCAL=1`, the console email backend prints outgoing messages to the
 terminal. Actual inbox delivery requires a configured email backend.
 
+## Daily historical OHLCV backfill
+
+By default the command prints an offline plan. It does not connect to the database or contact a provider. Pin `--end` for a reproducible run. Use `--days 30|90|180|365` or an explicit inclusive `--start` and `--end`. The plan also includes the 30 expected sessions before the start date.
+
+```powershell
+python manage.py backfill_historical_data --provider binance --asset-class crypto --symbol BTC/EUR --exchange BINANCE --currency EUR --days 90 --end 2025-12-29
+python manage.py backfill_historical_data --dry-run --provider twelve --asset-class stock --symbol AAPL --exchange XNAS --currency USD --adjustment split --start 2025-11-01 --end 2025-12-29 --calendar-file .\nasdaq-sessions.json
+```
+
+For equities and ETFs, supply a JSON schedule for the exact listing MIC. Use the venue's published calendar. The inclusive `start` and `end` must cover the requested period and preceding warm-up. Supply one entry per session with its actual close as an offset-aware timestamp, including early closes. Omit weekends, holidays and other closures. The abbreviated example below shows the format. A schedule for a real request must include all applicable sessions.
+
+```json
+{
+  "exchange": "XNAS",
+  "timezone": "America/New_York",
+  "start": "2025-12-24",
+  "end": "2025-12-26",
+  "sessions": {
+    "2025-12-24": "2025-12-24T13:00:00-05:00",
+    "2025-12-26": "2025-12-26T16:00:00-05:00"
+  }
+}
+```
+
+Crypto uses daily UTC sessions. Twelve Data uses bounded `time_series` requests. Alpaca uses the IEX feed and follows page tokens within each bounded request window. The supplied Alpaca MIC identifies the listing calendar, while IEX identifies the source feed. Binance verifies both assets of the Spot pair using `exchangeInfo` and uses UTC-bounded `klines` requests. Forming candles are excluded. [Twelve Data date boundaries](https://support.twelvedata.com/en/articles/5214728-getting-historical-data) · [Alpaca historical bars](https://docs.alpaca.markets/us/reference/stockbars) · [Binance Spot klines](https://developers.binance.com/en/docs/catalog/core-trading-spot-trading/api/rest-api/market)
+
+`--apply` authorizes network requests and writes to `HistoricalBar`, the shared provider cache and quota counters. Use it only on the intended database with the historical schema already present and with authorization for the provider data. A rerun with the same dates skips windows already covered by valid bars. Partial responses leave gaps visible. Provider errors stop the command after reporting progress, and a temporary request failure gets one retry after the cache lease. A short-lived cached partial response can affect an immediate rerun. Existing source bars are preserved.
+
 ## Code map
 
 | Path | Purpose |
