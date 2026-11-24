@@ -5,6 +5,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation, localcontext
 from zoneinfo import ZoneInfo
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -14,8 +15,6 @@ from .models import HistoricalFXRate
 
 DAY = timedelta(days=1)
 FX_ZONE = ZoneInfo("Australia/Sydney")
-FX_CALENDAR = WeekdayCalendar()
-FX_MAX_AGE = timedelta(hours=96)
 FX_PRECISION = Decimal("0.000000000001")
 FX_LIMIT = Decimal("999999999999.999999999999")
 FX_SERIES = {"provider": TWELVE.name, "base_currency": "EUR", "quote_currency": "USD"}
@@ -32,9 +31,34 @@ class FXInput:
     quality: str = HistoricalFXRate.Quality.VALID
 
 
+@dataclass(frozen=True)
+class FXPolicy:
+    calendar: WeekdayCalendar
+    delay: timedelta
+    max_age: timedelta
+
+    def available_at(self, day):
+        return datetime.combine(day + DAY, time.min, FX_ZONE) + self.delay
+
+
+def get_fx_policy():
+    try:
+        delay = int(settings.HISTORICAL_FX_PUBLICATION_DELAY_MINUTES)
+        age = int(settings.HISTORICAL_FX_MAX_AGE_HOURS)
+        holidays = frozenset(
+            date.fromisoformat(value.strip())
+            for value in settings.HISTORICAL_FX_HOLIDAYS.split(",") if value.strip()
+        )
+        if not 0 <= delay <= 120 or not 1 <= age <= 96:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise ValueError("Invalid historical FX policy: check the delay, age and ISO holiday dates.") from None
+    return FXPolicy(WeekdayCalendar(holidays), timedelta(minutes=delay), timedelta(hours=age))
+
+
 def fx_available_at(day):
-    """Allow daily closes from 01:00 Sydney time on the following calendar day."""
-    return datetime.combine(day + DAY, time(1), FX_ZONE)
+    """Return the modeled availability cutoff, not a provider publication timestamp."""
+    return get_fx_policy().available_at(day)
 
 
 def _normalize_rate(raw):
@@ -52,13 +76,14 @@ def store_fx_rates(rates):
     result = Counter(inserted=0, duplicates=0, rejected=0, conflicts=0)
     sessions = defaultdict(list)
     now = timezone.now()
+    policy = get_fx_policy()
     today = now.astimezone(FX_ZONE).date()
     for entry in rates:
         if (
             not isinstance(entry, FXInput) or type(entry.session_date) is not date
-            or not FX_CALENDAR.is_session(entry.session_date)
+            or not policy.calendar.is_session(entry.session_date)
             or entry.session_date >= today
-            or fx_available_at(entry.session_date) > now
+            or policy.available_at(entry.session_date) > now
             or entry.quality not in HistoricalFXRate.Quality.values
         ):
             result["rejected"] += 1
@@ -77,14 +102,12 @@ def store_fx_rates(rates):
             rate, quality = records[0]
             existing, created = HistoricalFXRate.objects.get_or_create(
                 **FX_SERIES, session_date=day,
-                defaults={"rate": rate, "quality": quality, "available_at": fx_available_at(day)},
+                defaults={"rate": rate, "quality": quality, "available_at": policy.available_at(day)},
             )
             if created:
                 result["inserted"] += 1
                 result["duplicates"] += len(records) - 1
-            elif (existing.rate, existing.quality, existing.available_at) == (
-                rate, quality, fx_available_at(day),
-            ):
+            elif (existing.rate, existing.quality) == (rate, quality):
                 result["duplicates"] += len(records)
             else:
                 result["conflicts"] += len(records)
@@ -94,7 +117,11 @@ def store_fx_rates(rates):
 def inspect_fx_coverage(start, end):
     if start > end:
         raise ValueError("FX coverage start must be on or before the end.")
-    sessions = expected_sessions(start, end, FX_CALENDAR)
+    policy, now = get_fx_policy(), timezone.now()
+    sessions = [
+        day for day in expected_sessions(start, end, policy.calendar)
+        if policy.available_at(day) <= now
+    ]
     stored = dict(HistoricalFXRate.objects.filter(
         **FX_SERIES, session_date__range=(start, end),
     ).values_list("session_date", "quality"))
@@ -110,43 +137,86 @@ def inspect_fx_coverage(start, end):
     }
 
 
-def _valuation_session(as_of):
+def _valuation_session(as_of, policy):
     local = as_of.astimezone(FX_ZONE)
     day = local.date() - DAY
-    if fx_available_at(day) > as_of:
-        day -= DAY
-    while not FX_CALENDAR.is_session(day):
+    while not policy.calendar.is_session(day) or policy.available_at(day) > as_of:
         day -= DAY
     return day
 
 
-def historical_fx_rate(source, target, *, as_of, max_age=FX_MAX_AGE):
+def _quote_issue(quote, session, as_of, policy, max_age):
+    modeled_at = policy.available_at(session).astimezone(UTC)
+    if as_of - modeled_at > max_age:
+        return "stale"
+    if quote is None:
+        return "missing"
+    if quote.quality != HistoricalFXRate.Quality.VALID:
+        return "suspect"
+    stored_at = quote.available_at.astimezone(UTC)
+    if stored_at > as_of:
+        return "unavailable_at_valuation"
+    if as_of - stored_at > max_age:
+        return "stale"
+    return None
+
+
+def inspect_fx_valuations(valuations):
+    """Check the same historical FX rules used by conversion for each venue close."""
+    policy = get_fx_policy()
+    sessions = {
+        day: _valuation_session(close.astimezone(UTC), policy)
+        for day, close in valuations.items()
+    }
+    quotes = {
+        row.session_date: row for row in HistoricalFXRate.objects.filter(
+            **FX_SERIES, session_date__in=set(sessions.values()),
+        )
+    }
+    gaps = []
+    for day, close in valuations.items():
+        session = sessions[day]
+        issue = _quote_issue(quotes.get(session), session, close.astimezone(UTC), policy, policy.max_age)
+        if issue:
+            gaps.append({"session_date": day.isoformat(), "fx_date": session.isoformat(), "reason": issue})
+    return {
+        "series": FX_SERIES, "availability": "modeled", "timezone": FX_ZONE.key,
+        "publication_delay_minutes": policy.delay // timedelta(minutes=1),
+        "max_age_hours": policy.max_age // timedelta(hours=1),
+        "expected_valuations": len(valuations), "covered_valuations": len(valuations) - len(gaps),
+        "gaps": gaps, "covered": bool(valuations) and not gaps,
+    }
+
+
+def historical_fx_rate(source, target, *, as_of, max_age=None):
     """Return target units per source unit as of an aware valuation timestamp."""
     if not isinstance(as_of, datetime) or timezone.is_naive(as_of):
         raise ValueError("FX valuation requires an offset-aware timestamp.")
-    if not isinstance(max_age, timedelta) or not timedelta(0) < max_age <= FX_MAX_AGE:
-        raise ValueError("FX maximum age must be positive and at most 96 hours.")
+    policy = get_fx_policy()
+    max_age = policy.max_age if max_age is None else max_age
+    if not isinstance(max_age, timedelta) or not timedelta(0) < max_age <= policy.max_age:
+        raise ValueError("FX maximum age must be positive and within the configured maximum.")
     if {source, target} - {"EUR", "USD"}:
         raise ValueError("Historical FX currently supports EUR and USD.")
     if source == target:
         return Decimal(1)
 
     as_of = as_of.astimezone(UTC)
-    session = _valuation_session(as_of)
-    if as_of - fx_available_at(session).astimezone(UTC) > max_age:
-        raise HistoricalFXUnavailable(f"FX rate for {session.isoformat()} exceeds the maximum age.")
+    session = _valuation_session(as_of, policy)
     quote = HistoricalFXRate.objects.filter(
-        **FX_SERIES, session_date=session, quality=HistoricalFXRate.Quality.VALID,
-        available_at__lte=as_of, available_at__gte=as_of - max_age,
+        **FX_SERIES, session_date=session,
     ).first()
-    if quote is None:
-        raise HistoricalFXUnavailable(f"No usable FX rate for expected session {session.isoformat()}.")
+    issue = _quote_issue(quote, session, as_of, policy, max_age)
+    if issue == "stale":
+        raise HistoricalFXUnavailable(f"FX rate for {session.isoformat()} exceeds the maximum age.")
+    if issue:
+        raise HistoricalFXUnavailable(f"No usable FX rate for expected session {session.isoformat()} ({issue}).")
     with localcontext() as context:
         context.prec = 38
         return quote.rate if source == "EUR" else Decimal(1) / quote.rate
 
 
-def convert_historical_fx(amount, source, target, *, as_of, max_age=FX_MAX_AGE):
+def convert_historical_fx(amount, source, target, *, as_of, max_age=None):
     """Convert a finite amount without rounding it to account precision."""
     try:
         amount = Decimal(str(amount))

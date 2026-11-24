@@ -27,6 +27,7 @@ class BackfillPlan:
     end: date
     sessions: tuple
     windows: tuple
+    requested_end: date
 
 
 def _windows(sessions):
@@ -45,16 +46,19 @@ def _windows(sessions):
 
 def make_plan(calendar, *, end=None, start=None, days=None):
     today = timezone.now().astimezone(calendar.timezone).date()
-    end = end or today - DAY
+    requested_end = end or today - DAY
     if start is not None and days is not None:
         raise ValueError("Choose either --start or --days.")
     if days is not None and days not in SIMULATION_WINDOWS:
         raise ValueError("Unsupported historical backfill window.")
-    if end >= today or end < date(1902, 1, 1):
-        raise ValueError("Choose an end date from 1902 onward, before today in the venue timezone.")
-    start = start or end - timedelta(days=(days or 30) - 1)
-    if not 0 <= (end - start).days < max(SIMULATION_WINDOWS):
+    if requested_end < date(1902, 1, 1):
+        raise ValueError("Choose an end date from 1902 onward.")
+    start = start or requested_end - timedelta(days=(days or 30) - 1)
+    if not 0 <= (requested_end - start).days < max(SIMULATION_WINDOWS):
         raise ValueError("Choose an ordered range of at most 365 calendar days, inclusive.")
+    end = min(requested_end, today - DAY)
+    if start > end:
+        raise ValueError("The requested period contains no completed historical dates.")
     warmup = warmup_sessions(start, calendar)
     if len(warmup) != WARMUP_SESSIONS:
         raise CalendarError("Calendar unreliable: fewer than 30 preceding sessions.")
@@ -62,7 +66,7 @@ def make_plan(calendar, *, end=None, start=None, days=None):
     if not period:
         raise ValueError("The requested period contains no trading sessions.")
     sessions = tuple(warmup + period)
-    return BackfillPlan(start, end, sessions, tuple(_windows(sessions)))
+    return BackfillPlan(start, end, sessions, tuple(_windows(sessions)), requested_end)
 
 
 def estimate_requests(provider, windows):

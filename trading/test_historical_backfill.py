@@ -124,10 +124,12 @@ class HistoricalBackfillTests(TestCase):
                 self.assertEqual(plan["estimated_quota_units"], 20 + 2 * (plan["estimated_requests"] - 1))
         self.read.assert_not_called()
 
-    def test_missing_mismatched_and_insufficient_calendars_stop_before_fetching(self):
+    def test_unknown_mismatched_and_insufficient_calendars_stop_before_fetching(self):
         args = self.args("twelve", apply=True)
+        unknown = args[:-3]
+        unknown[unknown.index("XNAS")] = "XXXX"
         with self.assertRaisesMessage(CommandError, "Calendar unreliable"):
-            self.run_command(*args[:-3], "--apply")
+            self.run_command(*unknown, "--apply")
         self.write_calendar(exchange="XNYS")
         with self.assertRaisesMessage(CommandError, "schedule MIC differs"):
             self.run_command(*args)

@@ -325,7 +325,9 @@ python manage.py backfill_historical_data --provider binance --asset-class crypt
 python manage.py backfill_historical_data --dry-run --provider twelve --asset-class stock --symbol AAPL --exchange XNAS --currency USD --adjustment split --start 2025-11-01 --end 2025-12-29 --calendar-file .\nasdaq-sessions.json
 ```
 
-For equities and ETFs, supply a JSON schedule for the exact listing MIC. Use the venue's published calendar. The inclusive `start` and `end` must cover the requested period and preceding warm-up. Supply one entry per session with its actual close as an offset-aware timestamp, including early closes. Omit weekends, holidays and other closures. The abbreviated example below shows the format. A schedule for a real request must include all applicable sessions.
+XNAS, XNYS, XAMS and XBRU use the pinned `exchange-calendars` package for 2000–2026. Nasdaq follows the library's XNYS schedule alias and retains its own XNAS series identity. Binance uses daily UTC sessions, including weekends. Requests extending through the venue's current day or later are evaluated through yesterday. Check `requested_end` and `end` in the output. [Exchange Calendars](https://github.com/gerrymanoim/exchange_calendars/blob/master/exchange_calendars/calendar_utils.py) · [Euronext cash-market schedules](https://www.euronext.com/en/trading/trading-hours-holidays)
+
+Use `--calendar-file` to override an equity or ETF schedule, to cover unsupported years, or to supply a schedule for another listing MIC. Use the venue's published calendar. The inclusive `start` and `end` must cover the requested period and preceding warm-up. Supply one entry per session with its actual close as an offset-aware timestamp, including early closes. Omit weekends, holidays and other closures. The abbreviated example below shows the format. A schedule for a real request must include all applicable sessions.
 
 ```json
 {
@@ -357,9 +359,17 @@ python manage.py backfill_historical_fx --dry-run --pair EUR/USD --start 2025-10
 
 For future simulations, call `convert_historical_fx(amount, "USD", "EUR", as_of=valuation_timestamp)` from `trading.historical_fx`. The timestamp must include a UTC offset. The service returns a Decimal without rounding to account precision. It raises `HistoricalFXUnavailable` when a required rate is missing, suspect, or too old. It uses historical storage exclusively.
 
-- The availability rule is 01:00 `Australia/Sydney` on the day after the provider's session date, allowing one hour after the modeled end of the daily bar. The provider response supplies the bar date, so this cutoff is a modeling assumption. Historical publication timestamps and revision vintages are unavailable.
-- Expected sessions are Monday through Friday in Sydney. Until the next expected rate becomes available, a weekend valuation can use the preceding session. A missing weekday rate blocks conversion once that rate is due. Weekday holidays therefore appear as gaps under this policy.
-- Maximum age is 96 elapsed hours after availability, measured in UTC. Set a shorter `max_age` when the valuation requires it. Coverage reports missing and suspect dates separately.
+- `HISTORICAL_FX_PUBLICATION_DELAY_MINUTES` sets a delay of 0–120 minutes after the Sydney midnight following the provider's session date. It defaults to 60. The cutoff is modeled. Historical publication timestamps and revision vintages are unavailable. Conversion respects both the stored and configured cutoff when the policy changes.
+- `HISTORICAL_FX_HOLIDAYS` is a comma-separated list of confirmed provider closure dates in Sydney time. The default weekday schedule has no configured closures because the aggregate feed has no verified holiday list here. A missing weekday rate blocks conversion once due. During a weekend or a configured closure, the last expected session can be used within the age limit.
+- `HISTORICAL_FX_MAX_AGE_HOURS` sets a ceiling of 1–96 elapsed hours, with a default of 96. Set a shorter `max_age` for a valuation when required. Coverage reports missing and suspect dates separately.
+
+## Historical data readiness
+
+Run the read-only command against the intended database. It reports expected, valid, missing and rejected OHLCV dates and the 30-session warm-up for the exact provider, instrument, MIC, currency and adjustment. For USD series it checks historical FX against the venue close of every expected candle, including warm-up. EUR requires no FX. Other currencies report unsupported FX coverage. The overall result evaluates readiness for a daily simulation valued in EUR at venue close.
+
+```powershell
+python manage.py historical_data_readiness --provider twelve --asset-class stock --symbol AAPL --exchange XNAS --currency USD --adjustment split --days 90 --end 2025-12-29
+```
 
 ## Code map
 

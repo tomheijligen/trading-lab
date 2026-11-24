@@ -6,7 +6,7 @@ from django.utils import timezone
 
 from .historical_data import expected_sessions
 from .historical_fx import (
-    DAY, FX_CALENDAR, FX_SERIES, FX_ZONE, FXInput, fx_available_at, inspect_fx_coverage, store_fx_rates,
+    DAY, FX_SERIES, FX_ZONE, FXInput, get_fx_policy, inspect_fx_coverage, store_fx_rates,
 )
 from .market_data import DataError, TemporaryDataError, twelve_data
 from .models import HistoricalFXRate
@@ -20,10 +20,11 @@ def plan_fx_sessions(start, end):
     now = timezone.now()
     if end > now.astimezone(FX_ZONE).date():
         raise ValueError("FX backfill cannot request future dates.")
-    sessions = expected_sessions(start, end, FX_CALENDAR)
+    policy = get_fx_policy()
+    sessions = expected_sessions(start, end, policy.calendar)
     if not sessions:
         raise ValueError("The FX range contains no expected weekday sessions.")
-    if fx_available_at(sessions[-1]) > now:
+    if policy.available_at(sessions[-1]) > now:
         raise ValueError("FX backfill requires completed sessions past the availability cutoff.")
     return sessions
 

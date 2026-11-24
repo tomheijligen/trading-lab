@@ -2,6 +2,7 @@
 import json
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
+from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -14,6 +15,7 @@ class CalendarError(ValueError):
 
 class CryptoCalendar(DailyCalendar):
     timezone = UTC
+    source = "daily_utc"
 
     def close_at(self, day):
         return datetime.combine(day + timedelta(days=1), time.min, tzinfo=UTC)
@@ -26,6 +28,7 @@ class VenueCalendar(SessionCalendar):
     start: date
     end: date
     closes: dict
+    source = "manual"
 
     def is_session(self, day):
         if not self.start <= day <= self.end:
@@ -34,6 +37,45 @@ class VenueCalendar(SessionCalendar):
 
     def close_at(self, day):
         return self.closes.get(day)
+
+
+EXCHANGE_ZONES = {
+    "XNAS": "America/New_York", "XNYS": "America/New_York",
+    "XAMS": "Europe/Amsterdam", "XBRU": "Europe/Brussels",
+}
+FIRST_YEAR = 2000
+LAST_YEAR = 2026
+
+
+@lru_cache(maxsize=32)
+def _automatic_closes(exchange, year):
+    try:
+        from exchange_calendars import get_calendar
+
+        calendar = get_calendar(exchange, start=date(year, 1, 1), end=date(year, 12, 31))
+        return {
+            session.date(): close.to_pydatetime()
+            for session, close in calendar.schedule["close"].items()
+        }
+    except (ImportError, ValueError, KeyError) as error:
+        raise CalendarError("Calendar unreliable: automatic exchange schedule unavailable.") from error
+
+
+@dataclass(frozen=True)
+class AutomaticCalendar(SessionCalendar):
+    exchange: str
+    timezone: ZoneInfo
+    source = "exchange_calendars"
+
+    def is_session(self, day):
+        return self.close_at(day) is not None
+
+    def close_at(self, day):
+        if not FIRST_YEAR <= day.year <= LAST_YEAR:
+            raise CalendarError(
+                f"Calendar unreliable: automatic schedules cover {FIRST_YEAR}–{LAST_YEAR}."
+            )
+        return _automatic_closes(self.exchange, day.year).get(day)
 
 
 def _unique_keys(items):
@@ -49,9 +91,13 @@ def load_calendar(asset_class, exchange, filename=None):
     if asset_class == "crypto":
         if filename is not None:
             raise CalendarError("Crypto backfill uses daily UTC sessions.")
+        if exchange != "BINANCE":
+            raise CalendarError("Calendar unreliable: no automatic schedule for this crypto venue.")
         return CryptoCalendar()
     if filename is None:
-        raise CalendarError("Calendar unreliable: supply a complete schedule for the instrument's MIC.")
+        if exchange not in EXCHANGE_ZONES:
+            raise CalendarError("Calendar unreliable: supply a complete schedule for the instrument's MIC.")
+        return AutomaticCalendar(exchange, ZoneInfo(EXCHANGE_ZONES[exchange]))
     try:
         data = json.loads(Path(filename).read_text(encoding="utf-8"), object_pairs_hook=_unique_keys)
         if data["exchange"] != exchange:
