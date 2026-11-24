@@ -256,6 +256,38 @@ class MarketObservation(models.Model):
             )
         ]
 
+class HistoricalFXRate(models.Model):
+    class Quality(models.TextChoices):
+        VALID = "valid", "Valid"
+        SUSPECT = "suspect", "Suspect"
+
+    provider = models.CharField(max_length=24)
+    base_currency = models.CharField(max_length=3)
+    quote_currency = models.CharField(max_length=3)
+    session_date = models.DateField()
+    available_at = models.DateTimeField()
+    rate = models.DecimalField(max_digits=24, decimal_places=12)
+    quality = models.CharField(max_length=8, choices=Quality.choices, default=Quality.VALID)
+    ingested_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=("provider", "base_currency", "quote_currency", "session_date"),
+                name="unique_historical_fx_session",
+            ),
+            models.CheckConstraint(condition=models.Q(rate__gt=0), name="historical_fx_rate_positive"),
+            models.CheckConstraint(
+                condition=models.Q(base_currency__lt=models.F("quote_currency")),
+                name="historical_fx_pair_canonical",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(quality__in=("valid", "suspect")),
+                name="historical_fx_quality_known",
+            ),
+        ]
+
+
 class HistoricalBar(models.Model):
     class Quality(models.TextChoices):
         VALID = "valid", "Valid"

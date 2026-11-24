@@ -344,6 +344,23 @@ Crypto uses daily UTC sessions. Twelve Data uses bounded `time_series` requests.
 
 `--apply` authorizes network requests and writes to `HistoricalBar`, the shared provider cache and quota counters. Use it only on the intended database with the historical schema already present and with authorization for the provider data. A rerun with the same dates skips windows already covered by valid bars. Partial responses leave gaps visible. Provider errors stop the command after reporting progress, and a temporary request failure gets one retry after the cache lease. A short-lived cached partial response can affect an immediate rerun. Existing source bars are preserved.
 
+## Daily historical FX
+
+`HistoricalFXRate` stores one canonical EUR/USD rate per provider and Sydney session date, with a modeled availability timestamp, quality status and ingestion timestamp. Migration `0015_historical_fx_rate` adds that table. USD/EUR is the reciprocal of the same row. A changed rate for a stored session is reported as a conflict and the original is retained.
+
+The Twelve Data adapter uses daily `time_series` closes. The offline plan needs no connection or credentials. With authorization, `--apply` uses the existing `TWELVE_DATA_API_KEY`, provider cache, quota and backoff, and requires the FX schema on the intended database. The inclusive date range is limited to 365 calendar days. [Twelve Data FX timezone](https://support.twelvedata.com/en/articles/5745849-timezones) · [Historical date bounds](https://support.twelvedata.com/en/articles/5214728-getting-historical-data)
+
+```powershell
+python manage.py backfill_historical_fx --pair USD/EUR --start 2025-10-01 --end 2025-10-31
+python manage.py backfill_historical_fx --dry-run --pair EUR/USD --start 2025-10-01 --end 2025-10-31
+```
+
+For future simulations, call `convert_historical_fx(amount, "USD", "EUR", as_of=valuation_timestamp)` from `trading.historical_fx`. The timestamp must include a UTC offset. The service returns a Decimal without rounding to account precision. It raises `HistoricalFXUnavailable` when a required rate is missing, suspect, or too old. It uses historical storage exclusively.
+
+- The availability rule is 01:00 `Australia/Sydney` on the day after the provider's session date, allowing one hour after the modeled end of the daily bar. The provider response supplies the bar date, so this cutoff is a modeling assumption. Historical publication timestamps and revision vintages are unavailable.
+- Expected sessions are Monday through Friday in Sydney. Until the next expected rate becomes available, a weekend valuation can use the preceding session. A missing weekday rate blocks conversion once that rate is due. Weekday holidays therefore appear as gaps under this policy.
+- Maximum age is 96 elapsed hours after availability, measured in UTC. Set a shorter `max_age` when the valuation requires it. Coverage reports missing and suspect dates separately.
+
 ## Code map
 
 | Path | Purpose |
