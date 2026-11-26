@@ -59,6 +59,7 @@ def make_plan(calendar, *, end=None, start=None, days=None):
     end = min(requested_end, today - DAY)
     if start > end:
         raise ValueError("The requested period contains no completed historical dates.")
+    calendar.require_confirmed(end)
     warmup = warmup_sessions(start, calendar)
     if len(warmup) != WARMUP_SESSIONS:
         raise CalendarError("Calendar unreliable: fewer than 30 preceding sessions.")

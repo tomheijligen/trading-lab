@@ -67,6 +67,43 @@ class BacktestingTests(TestCase):
         self.assertEqual(job.status, "queued")
         self.assertTrue(process_simulation())
 
+    def test_invalid_input_fails_once_and_next_job_completes(self):
+        first = self.job()
+        first.inputs = {"schema": "historical_ohlcv_v1", "series": {"symbol": "BTC/EUR"}}
+        first.save(update_fields=["inputs"])
+        following = self.job()
+        self.assertTrue(process_simulation())
+        first.refresh_from_db()
+        self.assertEqual(first.status, "failed")
+        self.assertIn("Invalid stored simulation input", first.error)
+        self.assertEqual(first.result, {})
+        self.assertTrue(process_simulation())
+        following.refresh_from_db()
+        result = following.result
+        self.assertEqual(following.status, "done")
+        self.assertEqual(len(result["strategies"]), 10)
+        self.assertFalse(process_simulation())
+        following.refresh_from_db()
+        self.assertEqual(following.result, result)
+
+    def test_non_finite_prices_are_terminal_invalid_input(self):
+        job = self.job()
+        job.inputs["BTC/EUR"][self.start.isoformat()] = "NaN"
+        job.save(update_fields=["inputs"])
+        self.assertTrue(process_simulation())
+        job.refresh_from_db()
+        self.assertEqual(job.status, "failed")
+
+    def test_unexpected_runtime_failure_rolls_back_for_retry(self):
+        job = self.job()
+        with patch("trading.backtesting.replay", side_effect=OSError("Temporary failure")):
+            with self.assertRaises(OSError):
+                process_simulation()
+        job.refresh_from_db()
+        self.assertEqual(job.status, "queued")
+        self.assertTrue(process_simulation())
+        self.assertFalse(process_simulation())
+
     def test_exports_are_owner_scoped(self):
         job = self.job()
         process_simulation()

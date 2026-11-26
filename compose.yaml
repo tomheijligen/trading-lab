@@ -2,7 +2,7 @@ x-app: &app
   image: trading-lab:local
   build: .
   env_file: ${TRADING_ENV_FILE:-.env}
-  environment:
+  environment: &app-env
     PGHOST: db
     PGPORT: "5432"
     TRADING_LOCAL: "0"
@@ -32,6 +32,9 @@ services:
 
   migrate:
     <<: *app
+    environment:
+      <<: *app-env
+      TRADING_MIGRATION_TARGET: ${TRADING_MIGRATION_TARGET:-}
     depends_on:
       db: {condition: service_healthy}
     command: ["sh", "-ec", "python manage.py migrate --noinput && python manage.py collectstatic --noinput"]
