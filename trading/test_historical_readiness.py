@@ -18,6 +18,31 @@ DAY = timedelta(days=1)
 
 
 class ExchangeCalendarTests(TestCase):
+    def test_rule_based_projection_covers_all_venues_through_2030(self):
+        for mic in ("XNAS", "XNYS", "XAMS", "XBRU"):
+            calendar = load_calendar("stock", mic)
+            for year in range(2027, 2031):
+                self.assertFalse(calendar.is_session(date(year, 1, 1)))
+                self.assertTrue(any(calendar.is_session(date(year, 1, day)) for day in range(4, 11)))
+            self.assertFalse(calendar.is_session(date(2030, 4, 19)))  # Good Friday.
+            self.assertEqual(calendar.close_at(date(2030, 3, 8)).hour,
+                             calendar.close_at(date(2030, 4, 1)).hour + 1)
+            with self.assertRaises(CalendarError):
+                calendar.is_session(date(2031, 1, 2))
+
+    @patch("trading.historical_backfill.timezone.now", return_value=datetime(2029, 2, 1, tzinfo=UTC))
+    def test_confirmed_year_boundary_and_projected_historical_window(self, _now):
+        nyse = load_calendar("stock", "XNYS")
+        plan = make_plan(nyse, start=date(2027, 1, 4), end=date(2027, 1, 8))
+        self.assertEqual(len(plan.sessions), 35)
+        self.assertEqual(plan.sessions[29], date(2026, 12, 31))
+        self.assertNotIn(date(2027, 1, 1), plan.sessions)
+        self.assertFalse(nyse.is_session(date(2027, 7, 5)))
+        self.assertFalse(load_calendar("stock", "XBRU").is_session(date(2027, 3, 29)))
+        for mic in ("XNAS", "XAMS", "XBRU"):
+            with self.assertRaisesMessage(CalendarError, "projected"):
+                make_plan(load_calendar("stock", mic), start=date(2028, 1, 3), end=date(2028, 1, 7))
+
     def test_us_holidays_special_closure_and_short_session(self):
         for mic in ("XNYS", "XNAS"):
             calendar = load_calendar("stock", mic)

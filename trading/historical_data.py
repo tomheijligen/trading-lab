@@ -37,6 +37,9 @@ class SessionCalendar:
     def is_session(self, day):
         raise NotImplementedError
 
+    def require_confirmed(self, end):
+        """Allow rule-based calendars to reject unconfirmed historical dates."""
+
 
 @dataclass(frozen=True)
 class WeekdayCalendar(SessionCalendar):
@@ -118,6 +121,8 @@ def validate_bars(bars, *, calendar=None):
         candidates = [entry for entry in entries if entry["quality"] == HistoricalBar.Quality.VALID]
         if not candidates:
             continue
+        if calendar is not None:
+            calendar.require_confirmed(day)
         first, *repeats = candidates
         prices = ("open", "high", "low", "close", "volume")
         reference = median(accepted[-20:]) if accepted else None
@@ -221,6 +226,8 @@ def inspect_coverage(*, provider, asset_class, symbol, exchange, currency, adjus
     """Report coverage for one exact series using the caller's venue calendar."""
     _check_metadata(provider, asset_class, symbol, exchange, currency, adjustment)
     end_date = end_date or timezone.localdate()
+    if calendar is not None:
+        calendar.require_confirmed(end_date)
     identity = {
         "provider": provider, "asset_class": asset_class, "symbol": symbol,
         "exchange": exchange, "currency": currency, "adjustment": adjustment,

@@ -97,6 +97,15 @@ class OHLCVSimulationTests(TestCase):
         self.assertContains(self.client.post(self.url, self.data), "not usable at session close")
         self.assertFalse(Simulation.objects.exists())
 
+    def test_corrupt_stored_crypto_snapshot_with_a_gap_is_rejected(self):
+        self.seed()
+        job = self.queue()
+        del job.inputs["bars"][(self.start + timedelta(days=1)).isoformat()]
+        job.save(update_fields=["inputs"])
+        self.assertTrue(process_simulation())
+        job.refresh_from_db()
+        self.assertEqual(job.status, "failed")
+
     def test_strict_open_timing_and_execution_costs(self):
         self.seed()
         job = self.queue()

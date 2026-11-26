@@ -224,12 +224,25 @@ $env:TWELVE_DATA_API_KEY = [System.Net.NetworkCredential]::new('', $marketKey).P
 
 ### 3. Apply migrations and start Django
 
+Set `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER` and `PGPASSWORD` explicitly. Review the database target
+before migration. The following example intentionally selects the original local
+database. Run the migration only after taking a backup and approving that target.
+
 ```powershell
 .\env\Scripts\python.exe manage.py check
+$env:TRADING_MIGRATION_TARGET = '127.0.0.1:5432/trading_lab_v2'
+.\env\Scripts\python.exe manage.py migrate --plan
 .\env\Scripts\python.exe manage.py migrate
+Remove-Item Env:TRADING_MIGRATION_TARGET
 .\env\Scripts\python.exe manage.py createsuperuser
 .\env\Scripts\python.exe manage.py runserver 127.0.0.1:8000
 ```
+
+The migration command compares the approved host, port and name with Django's configured target before
+connecting. It then verifies the server's database name, login role and port before planning or applying
+migrations. Compose's migration service reads `TRADING_MIGRATION_TARGET` from the Compose environment.
+For the example development database the target is `db:5432/trading_lab_dev`. Use
+`docker compose --env-file .env.example config --quiet` with `TRADING_ENV_FILE=.env.example` for offline validation.
 
 Run `createsuperuser` once when setting up a new database. For an existing
 database with an administrator, skip that command.
@@ -325,7 +338,7 @@ python manage.py backfill_historical_data --provider binance --asset-class crypt
 python manage.py backfill_historical_data --dry-run --provider twelve --asset-class stock --symbol AAPL --exchange XNAS --currency USD --adjustment split --start 2025-11-01 --end 2025-12-29 --calendar-file .\nasdaq-sessions.json
 ```
 
-XNAS, XNYS, XAMS and XBRU use the pinned `exchange-calendars` package for 2000–2026. Nasdaq follows the library's XNYS schedule alias and retains its own XNAS series identity. Binance uses daily UTC sessions, including weekends. Requests extending through the venue's current day or later are evaluated through yesterday. Check `requested_end` and `end` in the output. [Exchange Calendars](https://github.com/gerrymanoim/exchange_calendars/blob/master/exchange_calendars/calendar_utils.py) · [Euronext cash-market schedules](https://www.euronext.com/en/trading/trading-hours-holidays)
+XNAS, XNYS, XAMS and XBRU generate rule-based sessions through 2030 with the pinned `exchange-calendars` package. Historical processing accepts automatic dates through the confirmed venue cutoff. That cutoff is December 2026 for XNAS, December 2028 for XNYS, and December 23, 2027 for XAMS and XBRU pending exact year-end hours. Nasdaq follows the library's XNYS schedule alias and retains its own XNAS series identity. Binance uses daily UTC sessions. Requests extending through the venue's current day or later are evaluated through yesterday. Check `requested_end` and `end` in the output. [Nasdaq calendar](https://www.nasdaqtrader.com/Trader.aspx?id=Calendar) · [NYSE calendar](https://www.nyse.com/trade/hours-calendars) · [Euronext 2027 calendar](https://www.euronext.com/en/media/16439/download)
 
 Use `--calendar-file` to override an equity or ETF schedule, to cover unsupported years, or to supply a schedule for another listing MIC. Use the venue's published calendar. The inclusive `start` and `end` must cover the requested period and preceding warm-up. Supply one entry per session with its actual close as an offset-aware timestamp, including early closes. Omit weekends, holidays and other closures. The abbreviated example below shows the format. A schedule for a real request must include all applicable sessions.
 
@@ -378,6 +391,20 @@ In a virtual account with the platform lab enabled, open **Historical simulation
 The OHLCV replay fills at the session open with existing fees, half the spread and slippage. It uses only prior closes whose modeled availability is strictly before the opening timestamp. A daily crypto close shares a timestamp with the next UTC open, so that close can first influence a later open. With exactly 30 warm-up candles this also means no crypto fill at the first opening in the requested window. Portfolio marks use session closes. The fill model and identity appear in the JSON export. The account-history replay and previously queued jobs retain their existing fill model, reports and walk-forward logic. Learning Lab, paper trading risk rules and strategies are unchanged.
 
 For a controlled BTC/EUR run after approval, use the isolated validation database with the required schema and create a disposable virtual account there. Choose Binance, Crypto, BTC/EUR, BINANCE, EUR, and raw. Set 2026-08-26 through 2026-11-23. Queue manually, then process one queued job with `python manage.py run_simulations` using the same isolated configuration. Check the job's JSON export in the account.
+
+## Isolated testing and credential screening
+
+Run the PostgreSQL suite with `python manage.py test --settings=config.postgres_test_settings`.
+Set `PGTESTHOST` to a loopback address and `PGTESTPORT` to the dedicated cluster's non-5432 port.
+Set `PGTESTUSER`, `PGTESTPASSWORD` and a disposable `PGTESTDATABASE` starting with `test_`.
+Django connects to that cluster's `postgres` maintenance database and creates the disposable database.
+The standard settings reject the test command. An in-memory smoke suite is available with
+`--settings=config.test_settings`. PostgreSQL-specific tests require the PostgreSQL configuration.
+
+Run `python tools/scan_secrets.py` before committing. It checks tracked working-tree files for
+common private keys, provider-token patterns and local dotenv files, and reports paths only.
+Review new files before staging since the scan covers tracked files. This lightweight check
+does not scan Git history or detect every credential format.
 
 ## Code map
 

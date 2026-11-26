@@ -47,7 +47,14 @@ EXCHANGE_ZONES = {
     "XAMS": "Europe/Amsterdam", "XBRU": "Europe/Brussels",
 }
 FIRST_YEAR = 2000
-LAST_YEAR = 2026
+LAST_YEAR = 2030
+CONFIRMED_THROUGH = {
+    "XNAS": date(2026, 12, 31),
+    "XNYS": date(2028, 12, 31),
+    # Euronext has published 2027 holidays. Exact year-end half-day hours follow later.
+    "XAMS": date(2027, 12, 23),
+    "XBRU": date(2027, 12, 23),
+}
 
 
 @lru_cache(maxsize=32)
@@ -69,6 +76,13 @@ class AutomaticCalendar(SessionCalendar):
     exchange: str
     timezone: ZoneInfo
     source = "exchange_calendars"
+
+    def require_confirmed(self, end):
+        if end > CONFIRMED_THROUGH[self.exchange]:
+            raise CalendarError(
+                f"Calendar unreliable: {self.exchange} beyond {CONFIRMED_THROUGH[self.exchange]} "
+                "is projected; supply a confirmed venue schedule."
+            )
 
     def is_session(self, day):
         return self._session(day) is not None

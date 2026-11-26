@@ -1,14 +1,16 @@
 """Historical replays use immutable inputs and no paper-account writes."""
 from datetime import date, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from math import sqrt
 from statistics import stdev
+from zoneinfo import ZoneInfo
 
 from django.db import transaction
+from django.utils.timezone import is_aware
 
 from .engine import signal_for
 from .models import BOTS, Simulation, ZERO
-from .simulation_data import OHLCV_SCHEMA
+from .simulation_data import OHLCV_FILL_MODEL, OHLCV_SCHEMA
 
 WARMUP = 30
 BPS = Decimal("10000")
@@ -95,36 +97,89 @@ def replay(bot, histories, start, end, capital, fee, impact, *, execution=None):
     }
 
 
+def _price(value):
+    if isinstance(value, bool):
+        raise ValueError("Invalid price")
+    price = Decimal(value)
+    if not price.is_finite() or price <= ZERO or not -100 <= price.adjusted() <= 100:
+        raise ValueError("Invalid price")
+    return price
+
+
+def _parse_inputs(inputs):
+    if not isinstance(inputs, dict) or not inputs:
+        raise ValueError("Missing price history")
+    if inputs.get("schema") != OHLCV_SCHEMA:
+        return False, {
+            key: {date.fromisoformat(day): _price(close) for day, close in rows.items()}
+            for key, rows in inputs.items() if isinstance(rows, dict)
+        }, None
+
+    series = inputs["series"]
+    bars = inputs["bars"]
+    if (
+        not isinstance(bars, dict) or not bars
+        or not isinstance(series, dict) or series.get("currency") != "EUR"
+        or any(not isinstance(series.get(key), str) or not series[key].strip()
+               for key in ("provider", "asset_class", "symbol", "exchange", "adjustment"))
+        or not isinstance(inputs["calendar"], dict)
+        or inputs["fill_model"] != OHLCV_FILL_MODEL
+    ):
+        raise ValueError("Invalid historical series or bars")
+    closes, execution = {}, {}
+    venue_timezone = ZoneInfo(inputs["calendar"]["timezone"])
+    previous_close = None
+    previous_day = None
+    for day, bar in sorted(bars.items()):
+        session = date.fromisoformat(day)
+        opening = datetime.fromisoformat(bar["opens_at"])
+        closing = datetime.fromisoformat(bar["available_at"])
+        if (
+            not is_aware(opening) or not is_aware(closing) or opening >= closing
+            or opening.astimezone(venue_timezone).date() != session
+            or session in execution or (previous_close is not None and opening < previous_close)
+            or (series["asset_class"] == "crypto" and previous_day is not None
+                and session - previous_day != timedelta(days=1))
+        ):
+            raise ValueError("Invalid historical session timing")
+        session_open, session_close = _price(bar["open"]), _price(bar["close"])
+        if _price(bar["low"]) > min(session_open, session_close) or _price(bar["high"]) < max(
+            session_open, session_close,
+        ):
+            raise ValueError("Invalid historical OHLC order")
+        volume = Decimal(bar["volume"]) if bar["volume"] is not None else None
+        if volume is not None and (not volume.is_finite() or volume < ZERO):
+            raise ValueError("Invalid historical volume")
+        closes[session] = session_close
+        execution[session] = (session_open, opening, closing)
+        previous_close = closing
+        previous_day = session
+    return True, {series["symbol"]: closes}, execution
+
+
 def calculate(job):
-    historical = job.inputs.get("schema") == OHLCV_SCHEMA
-    execution = None
-    if historical:
-        bars = job.inputs["bars"]
-        symbol = job.inputs["series"]["symbol"]
-        histories = {symbol: {date.fromisoformat(day): Decimal(bar["close"]) for day, bar in bars.items()}}
-        execution = {
-            date.fromisoformat(day): (
-                Decimal(bar["open"]), datetime.fromisoformat(bar["opens_at"]),
-                datetime.fromisoformat(bar["available_at"]),
-            )
-            for day, bar in bars.items()
-        }
-    else:
-        histories = {
-            key: {date.fromisoformat(day): Decimal(close) for day, close in rows.items()}
-            for key, rows in job.inputs.items()
-        }
-    if not histories:
-        raise SimulationError("Add instruments with stored EUR daily closes first.")
+    try:
+        historical, histories, execution = _parse_inputs(job.inputs)
+        if not histories or (not historical and len(histories) != len(job.inputs)):
+            raise ValueError("Invalid price history")
+        capital = _price(job.capital)
+        if job.start > job.end or any(
+            not 0 <= cost <= 500 for cost in (job.fee_bps, job.spread_bps, job.slippage_bps)
+        ):
+            raise ValueError("Invalid simulation parameters")
+        gain = Decimal(job.paper_reference["gain"]) if job.paper_reference else None
+        if gain is not None and not gain.is_finite():
+            raise ValueError("Invalid paper reference")
+    except (KeyError, TypeError, ValueError, InvalidOperation, OverflowError):
+        raise SimulationError("Invalid stored simulation input: check the series, bars, timing or parameters.") from None
     fee = Decimal(job.fee_bps) / BPS
     impact = (Decimal(job.slippage_bps) + Decimal(job.spread_bps) / 2) / BPS
 
     def run(bot, start, end):
-        return replay(bot, histories, start, end, job.capital, fee, impact, execution=execution)
+        return replay(bot, histories, start, end, capital, fee, impact, execution=execution)
 
     rows = [{"bot": label, **run(bot, job.start, job.end)} for bot, label in BOTS]
-    if job.paper_reference:
-        gain = Decimal(job.paper_reference["gain"])
+    if gain is not None:
         for row in rows:
             row["difference"] = float(Decimal(str(row["gain"])) - gain)
     validation = []
@@ -166,6 +221,7 @@ def process_simulation():
         job.result = calculate(job)
         job.status = "done"
     except SimulationError as error:
+        job.result = {}
         job.error = str(error)
         job.status = "failed"
     job.save(update_fields=["result", "status", "error"])

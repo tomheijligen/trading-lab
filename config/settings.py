@@ -20,15 +20,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-isuq**i&n26$y!bzyz#*=p%ku&kwq82iot3+$*qg#46o53-o9g'
-
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
-
-ALLOWED_HOSTS = []
-
-
 # Application definition
 
 INSTALLED_APPS = [
@@ -68,29 +59,6 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'config.wsgi.application'
-
-
-# Database
-# https://docs.djangoproject.com/en/5.2/ref/settings/#databases
-
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": os.getenv("PGDATABASE", "trading_lab_v2"),
-        "USER": os.getenv("PGUSER", "trading_app"),
-        "PASSWORD": os.environ["PGPASSWORD"],
-        "HOST": os.getenv("PGHOST", "127.0.0.1"),
-        "PORT": os.getenv("PGPORT", "5432"),
-        "OPTIONS": (
-            {}
-            if os.getenv("TRADING_LOCAL") == "1" or os.getenv("TRADING_PRIVATE_POSTGRES") == "1"
-            else {
-                "sslmode": "verify-full",
-                "sslrootcert": os.environ["PGSSLROOTCERT"],
-            }
-        ),
-    }
-}
 
 
 # Password validation
@@ -155,13 +123,19 @@ if not LOCAL and (
 ALLOWED_HOSTS = ["127.0.0.1", "localhost", "testserver"] if LOCAL else [origin.hostname]
 INSTALLED_APPS += ["trading"]
 
+for variable in ("PGDATABASE", "PGUSER", "PGHOST", "PGPORT", "PGPASSWORD"):
+    if not os.environ.get(variable, "").strip():
+        raise RuntimeError(f"Set {variable} explicitly before using Trading Lab.")
+if not os.environ["PGPORT"].isascii() or not os.environ["PGPORT"].isdigit() or not 1 <= int(os.environ["PGPORT"]) <= 65535:
+    raise RuntimeError("PGPORT must be a single PostgreSQL port number.")
+
 DATABASES = {"default": {
     "ENGINE": "django.db.backends.postgresql",
-    "NAME": os.getenv("PGDATABASE", "trading_lab_v2"),
-    "USER": os.getenv("PGUSER", "trading_app"),
+    "NAME": os.environ["PGDATABASE"],
+    "USER": os.environ["PGUSER"],
     "PASSWORD": os.environ["PGPASSWORD"],
-    "HOST": os.getenv("PGHOST", "127.0.0.1"),
-    "PORT": os.getenv("PGPORT", "5432"),
+    "HOST": os.environ["PGHOST"],
+    "PORT": os.environ["PGPORT"],
     "OPTIONS": {} if LOCAL or os.getenv("TRADING_PRIVATE_POSTGRES") == "1" else {
         "sslmode": "verify-full",
         "sslrootcert": os.environ["PGSSLROOTCERT"],
