@@ -371,6 +371,14 @@ Run the read-only command against the intended database. It reports expected, va
 python manage.py historical_data_readiness --provider twelve --asset-class stock --symbol AAPL --exchange XNAS --currency USD --adjustment split --days 90 --end 2025-12-29
 ```
 
+## Backtest a validated EUR OHLCV series
+
+In a virtual account with the platform lab enabled, open **Historical simulations** and choose **Validated EUR OHLCV**. Enter one exact series using the provider, asset class, symbol, exchange, EUR currency and adjustment. Choose up to 365 calendar days. The completed sessions and all 30 expected warm-up sessions must have valid candles. The simulation queue stores a snapshot of the OHLCV data, venue times and source identity. The replay needs no provider or live quotes.
+
+The OHLCV replay fills at the session open with existing fees, half the spread and slippage. It uses only prior closes whose modeled availability is strictly before the opening timestamp. A daily crypto close shares a timestamp with the next UTC open, so that close can first influence a later open. With exactly 30 warm-up candles this also means no crypto fill at the first opening in the requested window. Portfolio marks use session closes. The fill model and identity appear in the JSON export. The account-history replay and previously queued jobs retain their existing fill model, reports and walk-forward logic. Learning Lab, paper trading risk rules and strategies are unchanged.
+
+For a controlled BTC/EUR run after approval, use the isolated validation database with the required schema and create a disposable virtual account there. Choose Binance, Crypto, BTC/EUR, BINANCE, EUR, and raw. Set 2026-08-26 through 2026-11-23. Queue manually, then process one queued job with `python manage.py run_simulations` using the same isolated configuration. Check the job's JSON export in the account.
+
 ## Code map
 
 | Path | Purpose |

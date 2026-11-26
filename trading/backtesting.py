@@ -1,5 +1,5 @@
 """Historical replays use immutable inputs and no paper-account writes."""
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from math import sqrt
 from statistics import stdev
@@ -8,6 +8,7 @@ from django.db import transaction
 
 from .engine import signal_for
 from .models import BOTS, Simulation, ZERO
+from .simulation_data import OHLCV_SCHEMA
 
 WARMUP = 30
 BPS = Decimal("10000")
@@ -17,7 +18,7 @@ class SimulationError(ValueError):
     pass
 
 
-def replay(bot, histories, start, end, capital, fee, impact):
+def replay(bot, histories, start, end, capital, fee, impact, *, execution=None):
     calendar = sorted({day for history in histories.values() for day in history if start <= day <= end})
     if not calendar or any(
         sum(day < start for day in history) < WARMUP
@@ -43,9 +44,18 @@ def replay(bot, histories, start, end, capital, fee, impact):
             if day not in history:
                 continue
             price = marks[key] = history[day]
-            window = previous[key]
+            if execution is None:
+                window = previous[key]
+                previous[key] = (window + [day])[-WARMUP:]
+            else:
+                price, opening, _ = execution[day]
+                window = sorted(
+                    earlier for earlier in history
+                    if earlier < day and execution[earlier][2] < opening
+                )[-WARMUP:]
+                if len(window) < WARMUP:
+                    continue
             action, _ = signal_for(bot, [history[earlier] for earlier in window])
-            previous[key] = (window + [day])[-WARMUP:]
             if action == "buy" and not units[key] and cash[key] > ZERO:
                 costs[key] = cash[key]
                 gross = cash[key] / (1 + fee)
@@ -86,17 +96,31 @@ def replay(bot, histories, start, end, capital, fee, impact):
 
 
 def calculate(job):
-    histories = {
-        key: {date.fromisoformat(day): Decimal(close) for day, close in rows.items()}
-        for key, rows in job.inputs.items()
-    }
+    historical = job.inputs.get("schema") == OHLCV_SCHEMA
+    execution = None
+    if historical:
+        bars = job.inputs["bars"]
+        symbol = job.inputs["series"]["symbol"]
+        histories = {symbol: {date.fromisoformat(day): Decimal(bar["close"]) for day, bar in bars.items()}}
+        execution = {
+            date.fromisoformat(day): (
+                Decimal(bar["open"]), datetime.fromisoformat(bar["opens_at"]),
+                datetime.fromisoformat(bar["available_at"]),
+            )
+            for day, bar in bars.items()
+        }
+    else:
+        histories = {
+            key: {date.fromisoformat(day): Decimal(close) for day, close in rows.items()}
+            for key, rows in job.inputs.items()
+        }
     if not histories:
         raise SimulationError("Add instruments with stored EUR daily closes first.")
     fee = Decimal(job.fee_bps) / BPS
     impact = (Decimal(job.slippage_bps) + Decimal(job.spread_bps) / 2) / BPS
 
     def run(bot, start, end):
-        return replay(bot, histories, start, end, job.capital, fee, impact)
+        return replay(bot, histories, start, end, job.capital, fee, impact, execution=execution)
 
     rows = [{"bot": label, **run(bot, job.start, job.end)} for bot, label in BOTS]
     if job.paper_reference:
@@ -122,7 +146,12 @@ def calculate(job):
                 "bot": winner[1], "start": boundary.isoformat(), "end": finish.isoformat(),
                 "gain": report["gain"], "drawdown": report["drawdown"],
             })
-    return {"strategies": rows, "validation": validation}
+    result = {"strategies": rows, "validation": validation}
+    if historical:
+        result["historical_data"] = {
+            key: job.inputs[key] for key in ("schema", "series", "calendar", "fill_model")
+        }
+    return result
 
 
 @transaction.atomic

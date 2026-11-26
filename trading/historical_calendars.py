@@ -17,6 +17,9 @@ class CryptoCalendar(DailyCalendar):
     timezone = UTC
     source = "daily_utc"
 
+    def open_at(self, day):
+        return datetime.combine(day, time.min, tzinfo=UTC)
+
     def close_at(self, day):
         return datetime.combine(day + timedelta(days=1), time.min, tzinfo=UTC)
 
@@ -48,14 +51,14 @@ LAST_YEAR = 2026
 
 
 @lru_cache(maxsize=32)
-def _automatic_closes(exchange, year):
+def _automatic_sessions(exchange, year):
     try:
         from exchange_calendars import get_calendar
 
         calendar = get_calendar(exchange, start=date(year, 1, 1), end=date(year, 12, 31))
         return {
-            session.date(): close.to_pydatetime()
-            for session, close in calendar.schedule["close"].items()
+            session.date(): (opening.to_pydatetime(), close.to_pydatetime())
+            for session, opening, close in calendar.schedule[["open", "close"]].itertuples()
         }
     except (ImportError, ValueError, KeyError) as error:
         raise CalendarError("Calendar unreliable: automatic exchange schedule unavailable.") from error
@@ -68,14 +71,22 @@ class AutomaticCalendar(SessionCalendar):
     source = "exchange_calendars"
 
     def is_session(self, day):
-        return self.close_at(day) is not None
+        return self._session(day) is not None
 
-    def close_at(self, day):
+    def _session(self, day):
         if not FIRST_YEAR <= day.year <= LAST_YEAR:
             raise CalendarError(
                 f"Calendar unreliable: automatic schedules cover {FIRST_YEAR}–{LAST_YEAR}."
             )
-        return _automatic_closes(self.exchange, day.year).get(day)
+        return _automatic_sessions(self.exchange, day.year).get(day)
+
+    def open_at(self, day):
+        session = self._session(day)
+        return session[0] if session else None
+
+    def close_at(self, day):
+        session = self._session(day)
+        return session[1] if session else None
 
 
 def _unique_keys(items):
