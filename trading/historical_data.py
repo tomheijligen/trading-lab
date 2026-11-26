@@ -2,6 +2,8 @@
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from itertools import groupby
+from sqlite3 import SQLITE_CONSTRAINT_UNIQUE
 from statistics import median
 
 from django.db import IntegrityError, transaction
@@ -13,7 +15,9 @@ SIMULATION_WINDOWS = (30, 90, 180, 365)
 WARMUP_SESSIONS = 30
 SPIKE_THRESHOLD = Decimal("0.50")
 PRICE_LIMIT = Decimal("1000000000")
-VOLUME_LIMIT = Decimal("1e22")
+VOLUME_LIMIT = Decimal("9999999999999999999999.99999999")
+BAR_KEY = ("provider", "asset_class", "symbol", "exchange", "currency", "session_date", "adjustment")
+BAR_CONSTRAINT = "unique_historical_market_bar"
 
 
 @dataclass(frozen=True)
@@ -95,58 +99,44 @@ def _validated_input(bar):
         return None
 
 
-def validate_bars(bars, *, expected_sessions=None, end_date=None):
-    """Return every source row, flagging duplicates, gaps and suspicious prices."""
+def validate_bars(bars, *, calendar=None):
+    """Classify each input. Missing dates are assessed separately from row quality."""
     prepared = []
     for bar in bars:
-        entry = _validated_input(bar)
-        if entry:
-            prepared.append(entry)
-    prepared.sort(key=lambda entry: (entry["session_date"], entry["observed_at"]))
+        prepared.append(_validated_input(bar) or {
+            "quality": HistoricalBar.Quality.INVALID,
+            "quality_detail": "Missing or invalid session date or observation timestamp.",
+        })
+    prepared.sort(key=lambda entry: (
+        entry.get("session_date", date.max),
+        entry.get("observed_at") is None,
+        entry.get("observed_at"),
+    ))
 
-    counts = {}
-    for entry in prepared:
-        day = entry["session_date"]
-        counts[day] = counts.get(day, 0) + 1
-    duplicate_days = {day for day, count in counts.items() if count > 1}
-    for entry in prepared:
-        if entry["session_date"] in duplicate_days:
-            entry["quality"] = HistoricalBar.Quality.DUPLICATE
-            entry["quality_detail"] = "Multiple input records share this source session date."
-
-    duplicate_days = {
-        entry["session_date"] for entry in prepared
-        if entry["quality"] == HistoricalBar.Quality.DUPLICATE
-    }
     accepted = []
-    for entry in prepared:
-        if (
-            entry["quality"] != HistoricalBar.Quality.VALID
-            or entry["session_date"] in duplicate_days
-        ):
+    for day, entries in groupby(prepared, key=lambda entry: entry.get("session_date")):
+        candidates = [entry for entry in entries if entry["quality"] == HistoricalBar.Quality.VALID]
+        if not candidates:
             continue
-        reference = median([close for _, close in accepted[-20:]]) if accepted else None
-        if reference and abs(entry["close"] / reference - 1) > SPIKE_THRESHOLD:
-            entry["quality"] = HistoricalBar.Quality.SPIKE
-            entry["quality_detail"] = (
-                "Close moved more than 50% from the recent median. "
-                "Review the source and corporate actions."
-            )
+        first, *repeats = candidates
+        prices = ("open", "high", "low", "close", "volume")
+        reference = median(accepted[-20:]) if accepted else None
+        if calendar is not None and not calendar.is_session(day):
+            quality = HistoricalBar.Quality.INVALID
+            detail = "Date is outside the supplied venue calendar."
+        elif any(any(row[field] != first[field] for field in prices) for row in repeats):
+            quality = HistoricalBar.Quality.INVALID
+            detail = "Conflicting OHLCV values for the same source session."
+        elif reference and abs(first["close"] / reference - 1) > SPIKE_THRESHOLD:
+            quality = HistoricalBar.Quality.SPIKE
+            detail = "Close moved more than 50% from the recent median."
         else:
-            accepted.append((entry["session_date"], entry["close"]))
-
-    if expected_sessions is not None and end_date is not None:
-        present = {entry["session_date"] for entry in prepared}
-        missing = sorted(set(expected_sessions) - present)
-        if missing:
-            detail = (
-                f"{len(missing)} expected market sessions are missing "
-                f"through {end_date.isoformat()}."
-            )
-            for entry in prepared:
-                if entry["quality"] == HistoricalBar.Quality.VALID:
-                    entry["quality"] = HistoricalBar.Quality.GAP
-                    entry["quality_detail"] = detail
+            accepted.append(first["close"])
+            candidates = repeats
+            quality = HistoricalBar.Quality.DUPLICATE
+            detail = "Repeated OHLCV values for the same source session."
+        for row in candidates:
+            row.update(quality=quality, quality_detail=detail)
     return prepared
 
 
@@ -171,101 +161,121 @@ def _check_metadata(provider, asset_class, symbol, exchange, currency, adjustmen
         raise ValueError("Unsupported adjustment status.")
 
 
+def _is_bar_key_conflict(error):
+    cause = error.__cause__
+    if getattr(cause, "sqlstate", None) == "23505":
+        return cause.diag.constraint_name == BAR_CONSTRAINT
+    if getattr(cause, "sqlite_errorcode", None) == SQLITE_CONSTRAINT_UNIQUE:
+        table = HistoricalBar._meta.db_table
+        columns = ", ".join(f"{table}.{field}" for field in BAR_KEY)
+        return str(cause) == f"UNIQUE constraint failed: {columns}"
+    return False
+
+
 def store_bars(*, provider, asset_class, symbol, exchange, currency, adjustment,
                bars, calendar=None):
-    """Insert source-currency bars idempotently, preserving the first provider record."""
+    """Store valid source bars, preserving the first accepted row for each key."""
     _check_metadata(provider, asset_class, symbol, exchange, currency, adjustment)
-    prepared = validate_bars(bars)
-    if calendar and prepared:
-        expected = expected_sessions(
-            prepared[0]["session_date"], prepared[-1]["session_date"], calendar,
-        )
-        prepared = validate_bars(
-            bars, expected_sessions=expected, end_date=prepared[-1]["session_date"],
-        )
-
-    records = [
-        HistoricalBar(
-            provider=provider, asset_class=asset_class, symbol=symbol,
-            exchange=exchange, currency=currency, adjustment=adjustment, **values,
-        )
-        for values in prepared
-    ]
-    if not records:
-        return {"inserted": 0, "duplicates": 0, "quality": {}}
-
-    inserted = 0
-    with transaction.atomic():
-        for record in records:
-            if record.quality == HistoricalBar.Quality.INVALID:
-                continue
-            try:
-                with transaction.atomic():
-                    record.save(force_insert=True)
-                    inserted += 1
-            except IntegrityError:
-                # A database uniqueness conflict is an idempotent replay.
-                # Existing source values and their ingestion timestamps are preserved.
-                continue
-
-    quality = {}
-    for record in records:
-        quality[record.quality] = quality.get(record.quality, 0) + 1
-    return {
-        "inserted": inserted,
-        "duplicates": len(records) - inserted,
-        "quality": quality,
-    }
-
-
-def inspect_coverage(*, provider, asset_class, symbol, exchange, currency,
-                     end_date=None, calendar=None):
-    """Report usable bars and 30/90/180/365-day warm-up coverage."""
-    end_date = end_date or timezone.localdate()
-    rows = list(HistoricalBar.objects.filter(
-        provider=provider, asset_class=asset_class, symbol=symbol,
-        exchange=exchange, currency=currency,
-        session_date__lte=end_date, quality=HistoricalBar.Quality.VALID,
-    ).order_by("session_date"))
-    quality_rows = list(HistoricalBar.objects.filter(
-        provider=provider, asset_class=asset_class, symbol=symbol,
-        exchange=exchange, currency=currency, session_date__lte=end_date,
-    ).order_by("session_date"))
-    report = {
+    identity = {
         "provider": provider, "asset_class": asset_class, "symbol": symbol,
-        "exchange": exchange, "currency": currency, "end_date": end_date.isoformat(),
-        "available": len(rows), "windows": {},
+        "exchange": exchange, "currency": currency, "adjustment": adjustment,
     }
-    for days in SIMULATION_WINDOWS:
-        start = end_date - timedelta(days=days)
-        window = [row for row in rows if start <= row.session_date <= end_date]
-        warmup = [row for row in rows if row.session_date < start]
-        all_window = [row for row in quality_rows if start <= row.session_date <= end_date]
-        all_warmup = [row for row in quality_rows if row.session_date < start]
-        gaps = []
-        calendar_status = "unavailable"
-        if calendar:
-            expected = expected_sessions(start, end_date, calendar)
-            present = {row.session_date for row in all_window}
-            gaps = [day.isoformat() for day in expected if day not in present]
-            calendar_status = "checked"
-        report["windows"][days] = {
+    result = {"inserted": 0, "duplicates": 0, "rejected": 0, "quality": {}}
+    prepared = validate_bars(bars, calendar=calendar)
+    with transaction.atomic():
+        for entry in prepared:
+            quality = entry["quality"]
+            if quality == HistoricalBar.Quality.VALID:
+                try:
+                    with transaction.atomic():
+                        HistoricalBar.objects.create(**identity, **entry)
+                except IntegrityError as error:
+                    if not _is_bar_key_conflict(error):
+                        raise
+                    quality = HistoricalBar.Quality.DUPLICATE
+
+            if quality == HistoricalBar.Quality.VALID:
+                result["inserted"] += 1
+            elif quality == HistoricalBar.Quality.DUPLICATE:
+                result["duplicates"] += 1
+            else:
+                result["rejected"] += 1
+            result["quality"][quality] = result["quality"].get(quality, 0) + 1
+    return result
+
+
+def warmup_sessions(start, calendar):
+    # Limit the search in case the calendar has no session data for this period.
+    days = []
+    for offset in range(1, min(366, (start - date.min).days) + 1):
+        day = start - timedelta(days=offset)
+        if calendar.is_session(day):
+            days.append(day)
+            if len(days) == WARMUP_SESSIONS:
+                break
+    return sorted(days)
+
+
+def inspect_coverage(*, provider, asset_class, symbol, exchange, currency, adjustment,
+                     end_date=None, calendar=None, start_date=None):
+    """Report coverage for one exact series using the caller's venue calendar."""
+    _check_metadata(provider, asset_class, symbol, exchange, currency, adjustment)
+    end_date = end_date or timezone.localdate()
+    identity = {
+        "provider": provider, "asset_class": asset_class, "symbol": symbol,
+        "exchange": exchange, "currency": currency, "adjustment": adjustment,
+    }
+    series = HistoricalBar.objects.filter(
+        **identity, session_date__lte=end_date,
+    )
+    if start_date is not None:
+        if start_date > end_date:
+            raise ValueError("Coverage start date must be on or before its end date.")
+        preceding = warmup_sessions(start_date, calendar) if calendar is not None else []
+        series = series.filter(session_date__gte=preceding[0] if preceding else start_date)
+    qualities_by_day = dict(series.values_list("session_date", "quality"))
+    valid_days = {
+        day for day, quality in qualities_by_day.items()
+        if quality == HistoricalBar.Quality.VALID
+        and (calendar is None or calendar.is_session(day))
+    }
+    report = {
+        **identity, "end_date": end_date.isoformat(), "available": len(valid_days),
+        "windows": {},
+        "quality_counts": dict.fromkeys(HistoricalBar.Quality.values, 0),
+    }
+    for quality in qualities_by_day.values():
+        report["quality_counts"][quality] += 1
+
+    windows = (
+        {"requested": start_date} if start_date is not None else
+        {days: end_date - timedelta(days=days) for days in SIMULATION_WINDOWS}
+    )
+    for key, start in windows.items():
+        period = expected_sessions(start, end_date, calendar) if calendar is not None else []
+        warmup = warmup_sessions(start, calendar) if calendar is not None else []
+        missing = [day.isoformat() for day in period if day not in qualities_by_day]
+        rejected = [
+            day.isoformat() for day in period
+            if day in qualities_by_day and day not in valid_days
+        ]
+        warmup_unusable = sorted(day.isoformat() for day in warmup if day not in valid_days)
+        warmup_ready = len(warmup) == WARMUP_SESSIONS and not warmup_unusable
+        available = sum(start <= day <= end_date for day in valid_days)
+        report["windows"][key] = {
             "start_date": start.isoformat(),
-            "available_bars": len(window),
-            "warmup_bars": len(warmup),
-            "warmup_ready": len(warmup) >= WARMUP_SESSIONS,
-            "warmup_rejected_bars": len(all_warmup) - len(warmup),
-            "has_period_data": bool(window),
-            "covered": len(warmup) >= WARMUP_SESSIONS and bool(window) and not gaps,
-            "calendar_status": calendar_status,
-            "gap_dates": gaps,
+            "available_bars": available,
+            "expected_bars": len(period) if calendar is not None else None,
+            "warmup_bars": len(warmup) - len(warmup_unusable),
+            "warmup_ready": warmup_ready,
+            "warmup_rejected_bars": sum(
+                day in qualities_by_day and day not in valid_days for day in warmup
+            ),
+            "warmup_unusable_dates": warmup_unusable,
+            "has_period_data": bool(available),
+            "covered": bool(period) and warmup_ready and not missing and not rejected,
+            "calendar_status": "checked" if calendar is not None else "unavailable",
+            "gap_dates": missing,
+            "rejected_dates": rejected,
         }
-    report["quality_counts"] = {
-        quality: HistoricalBar.objects.filter(
-            provider=provider, asset_class=asset_class, symbol=symbol,
-            exchange=exchange, currency=currency, quality=quality,
-            session_date__lte=end_date,
-        ).count()
-        for quality, _ in HistoricalBar.Quality.choices
-    }
     return report

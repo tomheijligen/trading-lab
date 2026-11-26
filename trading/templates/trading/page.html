@@ -699,9 +699,8 @@
                 {% include "trading/market_research.html" %}
             {% endif %}
             {% if historical_simulations %}
-            <p>Compare strategies over the same dates with the same starting capital. This uses stored
-                EUR prices from the current watchlist. Missing and delisted instruments may bias the results.
-                Simulated returns carry no guarantee of future performance.</p>
+            <p>Choose the account's stored EUR close history or an exact validated EUR OHLCV series.
+                For OHLCV, orders use session opens and only closes available strictly before the open.</p>
             {% for job in simulation_jobs %}
             <details {% if forloop.first %}open{% endif %}>
                 <summary>{{ job.start }} to {{ job.end }} &middot; EUR {{ job.capital }} &middot; {{ job.status }}</summary>
@@ -713,7 +712,12 @@
                     Paper marks: {{ job.paper_reference.start }} to {{ job.paper_reference.end }}.
                     Each simulation starts in cash equal to the first paper mark.</p>
                 {% endif %}
-                <p>Instruments: {{ job.inputs|length }}. Fees {{ job.fee_bps }} bps,
+                <p>{% if job.inputs.schema == "historical_ohlcv_v1" %}
+                    {{ job.inputs.series.symbol }} &middot; {{ job.inputs.series.exchange }} &middot;
+                    {{ job.inputs.series.provider }} &middot; {{ job.inputs.series.adjustment }}.
+                    Session-open fills.
+                    {% else %}Instruments: {{ job.inputs|length }}.{% endif %}
+                    Fees {{ job.fee_bps }} bps,
                     spread {{ job.spread_bps }} bps, slippage {{ job.slippage_bps }} bps.</p>
                 <div class="table-scroll"><table>
                     <thead><tr><th>Strategy</th><th>Gain (EUR)</th><th>Return %</th><th>Drawdown %</th>

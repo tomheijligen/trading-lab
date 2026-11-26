@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import re
 from datetime import timedelta
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -16,6 +17,21 @@ from .models import MarketCache, ProviderUsage
 
 class DataError(Exception):
     pass
+
+
+class TemporaryDataError(DataError):
+    """A failed request can be retried after its cache lease expires."""
+
+    retry_after = 30
+
+
+class ProviderQuotaError(DataError):
+    """Stop the current run and let the shared provider budget recover."""
+
+
+class ProviderResponseError(ValueError):
+    def __init__(self, status):
+        self.status = status
 
 
 def read_json(url, params, headers):
@@ -57,7 +73,7 @@ class Provider:
                 or usage.minute_credits + weight > self.minute_limit
                 or (self.daily_limit and usage.day_credits + weight > self.daily_limit)
             ):
-                raise DataError(f"{self.name} request budget temporarily exhausted.")
+                raise ProviderQuotaError(f"{self.name} request budget temporarily exhausted.")
             usage.minute_credits += weight
             usage.day_credits += weight
             usage.save()
@@ -67,18 +83,25 @@ class Provider:
 
         try:
             payload = read_json(self.base_url + endpoint, params, headers)
-            if isinstance(payload, dict) and (
-                payload.get("status") == "error" or (payload.get("code") or 0) == 429
-            ):
-                if str(payload.get("code")) == "429":
-                    self.backoff(60)
-                raise ValueError("Provider rejected the request.")
+            if isinstance(payload, dict):
+                code = str(payload.get("code", ""))
+                if payload.get("status") == "error" or code in {"418", "429"}:
+                    status = int(code) if re.fullmatch(r"[0-9]{3}", code) else None
+                    raise ProviderResponseError(status)
         except (URLError, TimeoutError, ValueError, OSError) as error:
             ProviderUsage.objects.filter(pk=self.name).update(last_failure=timezone.now())
-            if isinstance(error, HTTPError) and error.code in {418, 429}:
-                retry = error.headers.get("Retry-After", "")
-                self.backoff(min(int(retry), 86400) if retry.isdecimal() else 120)
-            raise DataError(f"{self.name} could not supply market data.") from None
+            status = error.code if isinstance(error, HTTPError) else getattr(error, "status", None)
+            message = f"{self.name} could not supply market data."
+            if status in {418, 429}:
+                retry = error.headers.get("Retry-After", "") if isinstance(error, HTTPError) and error.headers else ""
+                delay = min(int(retry), 86400) if retry.isascii() and retry.isdecimal() and len(retry) <= 9 else 120
+                self.backoff(delay)
+                raise ProviderQuotaError(message) from None
+            if (status is not None and 500 <= status < 600) or (
+                status is None and isinstance(error, (URLError, OSError))
+            ):
+                raise TemporaryDataError(message) from None
+            raise DataError(message) from None
 
         finished = timezone.now()
         MarketCache.objects.filter(pk=cache.pk, retry_at=lease).update(
@@ -100,13 +123,13 @@ TWELVE = Provider("Twelve Data", "https://api.twelvedata.com/", 8, 800)
 BINANCE = Provider("Binance", "https://data-api.binance.vision/api/v3/", 120)
 
 
-def twelve_data(endpoint, **params):
+def twelve_data(endpoint, *, cache_ttl=None, **params):
     key = os.getenv("TWELVE_DATA_API_KEY")
     if not key:
         raise DataError("Set TWELVE_DATA_API_KEY to fetch Twelve Data market data.")
-    ttl = timedelta(minutes=settings.MARKET_REFRESH_MINUTES)
-    if endpoint == "time_series":
-        ttl = timedelta(hours=4)
+    ttl = cache_ttl
+    if ttl is None:
+        ttl = timedelta(hours=4) if endpoint == "time_series" else timedelta(minutes=settings.MARKET_REFRESH_MINUTES)
     return TWELVE.fetch(endpoint, params, {"Authorization": f"apikey {key}"}, ttl=ttl)
 
 

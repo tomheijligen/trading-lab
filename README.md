@@ -316,6 +316,69 @@ A scheduler must run this command periodically for automatic delivery. In
 `TRADING_LOCAL=1`, the console email backend prints outgoing messages to the
 terminal. Actual inbox delivery requires a configured email backend.
 
+## Daily historical OHLCV backfill
+
+By default the command prints an offline plan. It does not connect to the database or contact a provider. Pin `--end` for a reproducible run. Use `--days 30|90|180|365` or an explicit inclusive `--start` and `--end`. The plan also includes the 30 expected sessions before the start date.
+
+```powershell
+python manage.py backfill_historical_data --provider binance --asset-class crypto --symbol BTC/EUR --exchange BINANCE --currency EUR --days 90 --end 2025-12-29
+python manage.py backfill_historical_data --dry-run --provider twelve --asset-class stock --symbol AAPL --exchange XNAS --currency USD --adjustment split --start 2025-11-01 --end 2025-12-29 --calendar-file .\nasdaq-sessions.json
+```
+
+XNAS, XNYS, XAMS and XBRU use the pinned `exchange-calendars` package for 2000–2026. Nasdaq follows the library's XNYS schedule alias and retains its own XNAS series identity. Binance uses daily UTC sessions, including weekends. Requests extending through the venue's current day or later are evaluated through yesterday. Check `requested_end` and `end` in the output. [Exchange Calendars](https://github.com/gerrymanoim/exchange_calendars/blob/master/exchange_calendars/calendar_utils.py) · [Euronext cash-market schedules](https://www.euronext.com/en/trading/trading-hours-holidays)
+
+Use `--calendar-file` to override an equity or ETF schedule, to cover unsupported years, or to supply a schedule for another listing MIC. Use the venue's published calendar. The inclusive `start` and `end` must cover the requested period and preceding warm-up. Supply one entry per session with its actual close as an offset-aware timestamp, including early closes. Omit weekends, holidays and other closures. The abbreviated example below shows the format. A schedule for a real request must include all applicable sessions.
+
+```json
+{
+  "exchange": "XNAS",
+  "timezone": "America/New_York",
+  "start": "2025-12-24",
+  "end": "2025-12-26",
+  "sessions": {
+    "2025-12-24": "2025-12-24T13:00:00-05:00",
+    "2025-12-26": "2025-12-26T16:00:00-05:00"
+  }
+}
+```
+
+Crypto uses daily UTC sessions. Twelve Data uses bounded `time_series` requests. Alpaca uses the IEX feed and follows page tokens within each bounded request window. The supplied Alpaca MIC identifies the listing calendar, while IEX identifies the source feed. Binance verifies both assets of the Spot pair using `exchangeInfo` and uses UTC-bounded `klines` requests. Forming candles are excluded. [Twelve Data date boundaries](https://support.twelvedata.com/en/articles/5214728-getting-historical-data) · [Alpaca historical bars](https://docs.alpaca.markets/us/reference/stockbars) · [Binance Spot klines](https://developers.binance.com/en/docs/catalog/core-trading-spot-trading/api/rest-api/market)
+
+`--apply` authorizes network requests and writes to `HistoricalBar`, the shared provider cache and quota counters. Use it only on the intended database with the historical schema already present and with authorization for the provider data. A rerun with the same dates skips windows already covered by valid bars. Partial responses leave gaps visible. Provider errors stop the command after reporting progress, and a temporary request failure gets one retry after the cache lease. A short-lived cached partial response can affect an immediate rerun. Existing source bars are preserved.
+
+## Daily historical FX
+
+`HistoricalFXRate` stores one canonical EUR/USD rate per provider and Sydney session date, with a modeled availability timestamp, quality status and ingestion timestamp. Migration `0015_historical_fx_rate` adds that table. USD/EUR is the reciprocal of the same row. A changed rate for a stored session is reported as a conflict and the original is retained.
+
+The Twelve Data adapter uses daily `time_series` closes. The offline plan needs no connection or credentials. With authorization, `--apply` uses the existing `TWELVE_DATA_API_KEY`, provider cache, quota and backoff, and requires the FX schema on the intended database. The inclusive date range is limited to 365 calendar days. [Twelve Data FX timezone](https://support.twelvedata.com/en/articles/5745849-timezones) · [Historical date bounds](https://support.twelvedata.com/en/articles/5214728-getting-historical-data)
+
+```powershell
+python manage.py backfill_historical_fx --pair USD/EUR --start 2025-10-01 --end 2025-10-31
+python manage.py backfill_historical_fx --dry-run --pair EUR/USD --start 2025-10-01 --end 2025-10-31
+```
+
+For future simulations, call `convert_historical_fx(amount, "USD", "EUR", as_of=valuation_timestamp)` from `trading.historical_fx`. The timestamp must include a UTC offset. The service returns a Decimal without rounding to account precision. It raises `HistoricalFXUnavailable` when a required rate is missing, suspect, or too old. It uses historical storage exclusively.
+
+- `HISTORICAL_FX_PUBLICATION_DELAY_MINUTES` sets a delay of 0–120 minutes after the Sydney midnight following the provider's session date. It defaults to 60. The cutoff is modeled. Historical publication timestamps and revision vintages are unavailable. Conversion respects both the stored and configured cutoff when the policy changes.
+- `HISTORICAL_FX_HOLIDAYS` is a comma-separated list of confirmed provider closure dates in Sydney time. The default weekday schedule has no configured closures because the aggregate feed has no verified holiday list here. A missing weekday rate blocks conversion once due. During a weekend or a configured closure, the last expected session can be used within the age limit.
+- `HISTORICAL_FX_MAX_AGE_HOURS` sets a ceiling of 1–96 elapsed hours, with a default of 96. Set a shorter `max_age` for a valuation when required. Coverage reports missing and suspect dates separately.
+
+## Historical data readiness
+
+Run the read-only command against the intended database. It reports expected, valid, missing and rejected OHLCV dates and the 30-session warm-up for the exact provider, instrument, MIC, currency and adjustment. For USD series it checks historical FX against the venue close of every expected candle, including warm-up. EUR requires no FX. Other currencies report unsupported FX coverage. The overall result evaluates readiness for a daily simulation valued in EUR at venue close.
+
+```powershell
+python manage.py historical_data_readiness --provider twelve --asset-class stock --symbol AAPL --exchange XNAS --currency USD --adjustment split --days 90 --end 2025-12-29
+```
+
+## Backtest a validated EUR OHLCV series
+
+In a virtual account with the platform lab enabled, open **Historical simulations** and choose **Validated EUR OHLCV**. Enter one exact series using the provider, asset class, symbol, exchange, EUR currency and adjustment. Choose up to 365 calendar days. The completed sessions and all 30 expected warm-up sessions must have valid candles. The simulation queue stores a snapshot of the OHLCV data, venue times and source identity. The replay needs no provider or live quotes.
+
+The OHLCV replay fills at the session open with existing fees, half the spread and slippage. It uses only prior closes whose modeled availability is strictly before the opening timestamp. A daily crypto close shares a timestamp with the next UTC open, so that close can first influence a later open. With exactly 30 warm-up candles this also means no crypto fill at the first opening in the requested window. Portfolio marks use session closes. The fill model and identity appear in the JSON export. The account-history replay and previously queued jobs retain their existing fill model, reports and walk-forward logic. Learning Lab, paper trading risk rules and strategies are unchanged.
+
+For a controlled BTC/EUR run after approval, use the isolated validation database with the required schema and create a disposable virtual account there. Choose Binance, Crypto, BTC/EUR, BINANCE, EUR, and raw. Set 2026-08-26 through 2026-11-23. Queue manually, then process one queued job with `python manage.py run_simulations` using the same isolated configuration. Check the job's JSON export in the account.
+
 ## Code map
 
 | Path | Purpose |

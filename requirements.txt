@@ -4,3 +4,4 @@ argon2-cffi
 Pillow
 gunicorn>=23,<24
 websocket-client>=1.8,<2
+exchange-calendars==4.13.3
