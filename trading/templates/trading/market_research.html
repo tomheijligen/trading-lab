@@ -1,0 +1,35 @@
+{% if market_scanner %}
+<p>Ranking uses completed daily closes in the source currency. Quote age is measured from the provider timestamp.</p>
+<form method="get">{{ ranking_form.as_p }}<button type="submit">Update ranking</button></form>
+<div class="table-scroll"><table>
+    <thead><tr><th>Instrument</th><th>Venue / provider</th><th>Currency</th>
+        <th>Age (min)</th><th>Status</th><th>Volume</th><th>10-close return %</th>
+        <th>20-close return %</th><th>Trend %</th><th>Daily volatility %</th><th>Score</th></tr></thead>
+    <tbody>{% for entry in ranked %}
+    <tr><td>{{ entry.row.symbol }}</td><td>{{ entry.row.exchange }} / {{ entry.row.provider }}</td>
+        <td>{{ entry.row.currency }}</td><td>{{ entry.age_minutes }}</td>
+        <td>{% if entry.fresh %}Fresh{% else %}Closed or stale{% endif %}</td>
+        <td>{{ entry.row.volume|default_if_none:"Unavailable" }}</td>
+        <td>{{ entry.momentum|floatformat:2 }}</td><td>{{ entry.return|floatformat:2 }}</td>
+        <td>{{ entry.trend|floatformat:2 }}</td><td>{{ entry.volatility|floatformat:2 }}</td>
+        <td>{{ entry.score|floatformat:2 }}</td></tr>
+    {% empty %}
+    <tr><td colspan="11">No configured scanner instrument has enough data yet.</td></tr>
+    {% endfor %}</tbody>
+</table></div>
+{% endif %}
+{% if market_providers %}
+<p>Daily counts reset on the UTC date boundary. Credits track this application.</p>
+<div class="table-scroll"><table>
+    <thead><tr><th>Provider</th><th>Configuration</th><th>Minute credits</th><th>Daily credits</th>
+        <th>Last success</th><th>Last failure</th><th>Backoff</th></tr></thead>
+    <tbody>{% for provider in market_providers %}
+    <tr><td>{{ provider.name }}</td><td>{{ provider.enabled|yesno:"Enabled,Disabled" }}</td>
+        <td>{{ provider.minute }} / {{ provider.minute_limit }}</td>
+        <td>{{ provider.day }}{% if provider.day_limit %} / {{ provider.day_limit }}{% endif %}</td>
+        <td>{{ provider.usage.last_success|default:"Unavailable" }}</td>
+        <td>{{ provider.usage.last_failure|default:"Unavailable" }}</td>
+        <td>{{ provider.blocked|default:"Inactive" }}</td></tr>
+    {% endfor %}</tbody>
+</table></div>
+{% endif %}

@@ -10,3 +10,6 @@ __pycache__/
 *.dump
 *.backup
 staticfiles/
+.recovery-*/
+.python-runtime/
+.python-runtime.zip

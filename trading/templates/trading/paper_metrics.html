@@ -1,0 +1,35 @@
+{% if paper_windows %}
+<section class="lab-card">
+    <h2>Recorded paper performance</h2>
+    <p>Scheduled worker: {% if account.automatic %}enabled{% else %}paused{% endif %}.
+        Periods use available end-of-day portfolio marks. Returns approximate the effect of deposits between marks.</p>
+    <div class="lab-table"><table>
+        <thead><tr><th>Window</th><th>Marks / strategy</th><th>Gain EUR</th><th>Return %</th>
+            <th>Drawdown %</th><th>Orders</th><th>Fees EUR</th><th>Win %</th><th>Annualized Sharpe</th></tr></thead>
+        <tbody>{% for row in paper_windows %}
+            <tr><td>{{ row.days }} days</td>
+            {% if row.available %}
+                <td>{{ row.start|date:"Y-m-d" }} to {{ row.end|date:"Y-m-d" }} / {{ row.strategy }}</td>
+                <td>{{ row.gain|floatformat:2 }}</td><td>{{ row.return_pct|floatformat:2|default:"Unavailable" }}</td>
+                <td>{{ row.drawdown|floatformat:2|default:"Unavailable" }}</td>
+                <td>{{ row.orders }}</td><td>{{ row.fees|floatformat:2 }}</td>
+                <td>{{ row.win_rate|floatformat:2|default:"Unavailable" }}</td>
+                <td>{{ row.sharpe|floatformat:2|default:"Unavailable" }}</td>
+            {% else %}
+                <td colspan="8">Insufficient portfolio marks for this window.</td>
+            {% endif %}
+            </tr>
+        {% endfor %}</tbody>
+    </table></div>
+    <h3>Executed orders by strategy period</h3>
+    <div class="lab-table"><table>
+        <thead><tr><th>Strategy</th><th>Started</th><th>Ended</th><th>Orders</th>
+            <th>Realized gain EUR</th><th>Fees EUR</th></tr></thead>
+        <tbody>{% for period in strategy_periods %}
+        <tr><td>{{ period.bot }}</td><td>{{ period.start|default:"First strategy on record" }}</td>
+            <td>{{ period.end|default:"Current" }}</td><td>{{ period.orders }}</td>
+            <td>{{ period.profit|floatformat:2 }}</td><td>{{ period.fee|floatformat:2 }}</td></tr>
+        {% endfor %}</tbody>
+    </table></div>
+</section>
+{% endif %}

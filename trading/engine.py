@@ -1,18 +1,17 @@
-import json
-import os
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
-from urllib.error import URLError
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from .models import Account, Trade, ZERO
+from .binance_stream import latest_stream_candle
+from .market_data import ALPACA, BINANCE, DataError, alpaca_headers, twelve_data as request_data
+from .models import Account, MarketBar, MarketObservation, Trade, ZERO
 from .performance import record_capital
 
 
@@ -22,10 +21,6 @@ UNIT = Decimal("0.0000000001")
 FEE = Decimal("0.002")
 
 
-class DataError(Exception):
-    pass
-
-
 @dataclass(frozen=True)
 class Snapshot:
     history: list
@@ -33,6 +28,10 @@ class Snapshot:
     time: datetime
     price: Decimal
     market_open: bool
+    name: str = ""
+    provider: str = "Twelve Data"
+    exchange: str = ""
+    volume: Decimal | None = None
 
     @property
     def bar(self):
@@ -181,27 +180,17 @@ def signal_for(bot, closes):
     return signal, reason
 
 
-def request_data(endpoint, **params):
-    api_key = os.getenv("TWELVE_DATA_API_KEY")
-    if not api_key:
-        raise DataError("Set TWELVE_DATA_API_KEY to fetch market data.")
-
-    request = Request(
-        f"https://api.twelvedata.com/{endpoint}?{urlencode(params)}",
-        headers={"Authorization": f"apikey {api_key}"},
-    )
+def optional_volume(raw):
     try:
-        with urlopen(request, timeout=6) as response:
-            result = json.loads(response.read(500_000))
-    except (URLError, TimeoutError, ValueError):
-        raise DataError("The market data request failed.") from None
-
-    if not isinstance(result, dict) or result.get("status") == "error":
-        raise DataError("Check the symbol, exchange, and data permissions.")
-    return result
+        value = Decimal(str(raw))
+        if value.is_finite() and ZERO <= value < Decimal("1e22"):
+            return value
+    except InvalidOperation:
+        pass
+    return None
 
 
-def market_snapshot(item, fx):
+def twelve_snapshot(item, fx):
     params = {"symbol": item.symbol}
     if item.exchange:
         params["exchange"] = item.exchange
@@ -239,12 +228,17 @@ def market_snapshot(item, fx):
             raise ValueError("Price below supported precision.")
 
         quote_timestamp = quote.get("last_quote_at") or quote["timestamp"]
+        raw_name = quote.get("name")
+        name = raw_name.strip()[:255] if isinstance(raw_name, str) else ""
         return Snapshot(
             history=history,
             currency=currency,
             time=datetime.fromtimestamp(int(quote_timestamp), tz=UTC),
             price=price,
             market_open=quote.get("is_market_open") is True,
+            name=name,
+            exchange=str(series["meta"].get("exchange") or item.exchange)[:35],
+            volume=optional_volume(quote.get("volume")),
         )
     except (
         AttributeError, KeyError, TypeError, ValueError,
@@ -253,6 +247,142 @@ def market_snapshot(item, fx):
         raise DataError(
             "The provider returned incomplete or invalid market data."
         ) from None
+
+
+def binance_snapshot(item, fx):
+    base, currency = item.symbol.upper().split("/")
+    symbol = base + currency
+    now = timezone.now()
+    rows = BINANCE.fetch(
+        "klines", {"symbol": symbol, "interval": "1d", "limit": 121}, {},
+        ttl=timedelta(hours=4), weight=2,
+    )
+    history = [
+        [datetime.fromtimestamp(row[0] / 1000, UTC).date().isoformat(),
+         str(source_number(row[4]))]
+        for row in rows if datetime.fromtimestamp((row[6] + 1) / 1000, UTC) <= now
+    ]
+    if not history:
+        raise DataError("Binance returned no completed daily candles.")
+    stream = latest_stream_candle(symbol) if symbol in settings.MARKET_BINANCE_STREAM_SYMBOLS else None
+    if stream:
+        timestamp, price = stream
+    else:
+        latest = BINANCE.fetch(
+            "klines", {"symbol": symbol, "interval": "1m", "limit": 2}, {},
+            ttl=timedelta(minutes=settings.MARKET_REFRESH_MINUTES), weight=2,
+        )
+        closed = [row for row in latest if (row[6] + 1) / 1000 <= now.timestamp()]
+        if not closed:
+            raise DataError("Binance returned no completed minute candles.")
+        row = closed[-1]
+        timestamp = datetime.fromtimestamp((row[6] + 1) / 1000, UTC)
+        price = source_number(row[4])
+    if currency not in fx:
+        fx[currency] = source_number(request_data("exchange_rate", symbol=f"{currency}/EUR")["rate"])
+    return Snapshot(
+        history, currency, timestamp,
+        source_number(price * fx[currency]).quantize(TICK),
+        True, provider="Binance", exchange="Binance",
+    )
+
+
+def alpaca_snapshot(item, fx):
+    from urllib.parse import quote
+
+    symbol = quote(item.symbol, safe="")
+    today = timezone.now().astimezone(ZoneInfo("America/New_York")).date()
+    headers = alpaca_headers()
+    bars = ALPACA.fetch(
+        f"{symbol}/bars",
+        {"feed": "iex", "timeframe": "1Day", "currency": "USD", "adjustment": "split",
+         "start": (today - timedelta(days=183)).isoformat(),
+         "end": (today - timedelta(days=1)).isoformat(), "limit": 200},
+        headers, ttl=timedelta(hours=4),
+    )
+    trade = ALPACA.fetch(
+        f"{symbol}/trades/latest", {"feed": "iex", "currency": "EUR"}, headers,
+        ttl=timedelta(minutes=settings.MARKET_REFRESH_MINUTES),
+    )["trade"]
+    history = [
+        [day.isoformat(), str(source_number(row["c"]))]
+        for row in bars["bars"]
+        if (day := datetime.fromisoformat(row["t"]).astimezone(ZoneInfo("America/New_York")).date()) < today
+    ]
+    if not history:
+        raise DataError("Alpaca returned no completed IEX bars.")
+    # An IEX trade alone cannot authorize an order in the requested venue.
+    return Snapshot(
+        history, "USD", datetime.fromisoformat(trade["t"]),
+        source_number(trade["p"]).quantize(TICK), False, provider="Alpaca IEX", exchange="IEX",
+    )
+
+
+def market_snapshot(item, fx):
+    binance = (
+        settings.MARKET_BINANCE_ENABLED and item.group == "crypto"
+        and item.exchange.upper() in {"", "BINANCE"}
+        and item.symbol.upper().count("/") == 1
+        and item.symbol.upper().split("/")[-1] in {"EUR", "USD"}
+    )
+    providers = [twelve_snapshot]
+    if (
+        item.group in {"stock", "etf"}
+        and item.exchange.upper() in {"NASDAQ", "NYSE", "NYSE ARCA", "NYSE AMERICAN", "IEX"}
+        and alpaca_headers()
+    ):
+        providers.append(alpaca_snapshot)
+    if binance:
+        providers = [binance_snapshot] if item.exchange.upper() == "BINANCE" else [
+            twelve_snapshot, binance_snapshot,
+        ]
+    last_error = None
+    for provider in providers:
+        try:
+            snapshot = provider(item, fx)
+            now = timezone.now()
+            if snapshot.time > now or (
+                (snapshot.market_open or item.group == "crypto")
+                and now - snapshot.time > timedelta(minutes=30)
+            ):
+                raise DataError("Market quote timestamp is outside the accepted window.")
+            if snapshot.price <= ZERO or any(
+                left[0] >= right[0]
+                for left, right in zip(snapshot.history, snapshot.history[1:])
+            ):
+                raise DataError("Invalid market price or daily bar ordering.")
+            identity = {"group": item.group, "symbol": item.symbol, "requested_exchange": item.exchange}
+            if not MarketObservation.objects.filter(
+                **identity, exchange=snapshot.exchange, provider=snapshot.provider,
+                currency=snapshot.currency, history=snapshot.history,
+            ).exists():
+                MarketBar.objects.bulk_create(
+                    [MarketBar(
+                        provider=snapshot.provider, symbol=item.symbol,
+                        exchange=snapshot.exchange, currency=snapshot.currency,
+                        day=date.fromisoformat(day), close=price, observed_at=now,
+                    ) for day, price in snapshot.history],
+                    ignore_conflicts=True,
+                )
+            row, created = MarketObservation.objects.get_or_create(**identity, defaults={
+                "exchange": snapshot.exchange, "provider": snapshot.provider,
+                "currency": snapshot.currency, "price_eur": snapshot.price,
+                "quote_time": snapshot.time, "received_at": now,
+                "market_open": snapshot.market_open, "history": snapshot.history,
+                "volume": snapshot.volume,
+            })
+            if not created:
+                MarketObservation.objects.filter(pk=row.pk, quote_time__lte=snapshot.time).update(
+                    exchange=snapshot.exchange, provider=snapshot.provider, currency=snapshot.currency,
+                    price_eur=snapshot.price, quote_time=snapshot.time, received_at=now,
+                    market_open=snapshot.market_open, history=snapshot.history, volume=snapshot.volume,
+                )
+            return snapshot
+        except DataError as error:
+            last_error = error
+        except (KeyError, IndexError, TypeError, ValueError, InvalidOperation, OverflowError, OSError):
+            last_error = DataError("The provider returned incomplete or invalid market data.")
+    raise last_error
 
 
 def record_trade(item, account, side, price, units, fee, reason, profit=None):
@@ -326,13 +456,16 @@ def run_account(account_id, *, execute, scheduled=False, market_cache=None):
             return "Automatic rounds are paused."
 
         now = timezone.now()
-        if account.last_attempt and now - account.last_attempt < timedelta(minutes=2):
-            return "Please wait two minutes between market requests for this account."
+        cooldown = settings.MARKET_REFRESH_MINUTES if scheduled else 2
+        if account.last_attempt and now - account.last_attempt < timedelta(minutes=cooldown):
+            return f"Please wait {cooldown} minute(s) between market requests for this account."
 
         account.last_attempt = now
         account.save(update_fields=["last_attempt"])
         items = select_round_instruments(account, now.date())
         round_ids = [item.pk for item in items]
+        bot_revision = account.bot_revision
+        round_started = now
 
     # Fetch quotes outside the transaction. Scheduled accounts share the cache.
     scanned = candidate_label(items)
@@ -368,6 +501,11 @@ def run_account(account_id, *, execute, scheduled=False, market_cache=None):
         if scheduled and not account.automatic:
             return "Automatic rounds are paused."
 
+        if account.bot_revision != bot_revision:
+            return "The strategy changed during this round."
+        if account.last_attempt != round_started:
+            return "A newer round superseded this round."
+
         items = list(
             account.instrument_set.exclude(group="option")
             .filter(Q(pk__in=round_ids) | Q(units__gt=ZERO))
@@ -391,11 +529,14 @@ def run_account(account_id, *, execute, scheduled=False, market_cache=None):
 
             item.history = snapshot.history
             item.currency = snapshot.currency
-            item.source = "Market provider"
+            item.source = snapshot.provider
             closes = [Decimal(row[1]) for row in snapshot.history]
             item.signal, item.explanation = signal_for(account.bot, closes)
             item.price = snapshot.price
             item.quote_time = snapshot.time
+            item.quote_market_open = snapshot.market_open
+            if snapshot.name and snapshot.name.casefold() != item.symbol.casefold():
+                item.display_name = snapshot.name
             item.save()
 
             age = (now - snapshot.time).total_seconds()
@@ -443,11 +584,16 @@ def apply_signals(account, items, eligible, *, execution=None):
     if execution is None:
         execution = {}
 
+    from .bot_control import deployment_budget
+
     count = 0
     sold_this_round = set()
 
     # Process exits first so the proceeds are available for later buys.
     for item, snap in eligible:
+        if not item.bot_managed and item.units:
+            execution[item.pk] = "Position held outside this strategy"
+            continue
         if item.stop_bar and item.signal == "sell" and snap.bar > item.stop_bar:
             item.stop_bar = None
 
@@ -488,11 +634,14 @@ def apply_signals(account, items, eligible, *, execution=None):
 
         item.save()
 
-    all_quotes_eligible = len(eligible) == len(items)
+    eligible_ids = {item.pk for item, _ in eligible}
+    all_quotes_eligible = all(
+        item.pk in eligible_ids for item in items if item.bot_managed or not item.units
+    )
 
     # Preserve the existing requirement that all selected quotes qualify for buys.
     for item, snap in eligible:
-        if item.pk in sold_this_round:
+        if item.pk in sold_this_round or (item.units and not item.bot_managed):
             continue
         if item.signal == "hold":
             execution[item.pk] = "Hold: strategy is waiting"
@@ -533,6 +682,12 @@ def apply_signals(account, items, eligible, *, execution=None):
         target = equity * allocation / 100
         remaining = target - sum(peer.value for peer in group)
         budget = min(account.cash, target / len(group), remaining)
+        if account.max_position_pct < 100 or account.max_exposure_pct < 100 or account.max_loss_pct:
+            position_limit, exposure_headroom = deployment_budget(account, items)
+            budget = min(budget, position_limit, exposure_headroom)
+            if budget < 1:
+                execution[item.pk] = "Buy blocked by account risk limits"
+                continue
 
         if budget < 1:
             execution[item.pk] = (

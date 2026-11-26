@@ -83,7 +83,7 @@ DATABASES = {
         "PORT": os.getenv("PGPORT", "5432"),
         "OPTIONS": (
             {}
-            if os.getenv("TRADING_LOCAL") == "1"
+            if os.getenv("TRADING_LOCAL") == "1" or os.getenv("TRADING_PRIVATE_POSTGRES") == "1"
             else {
                 "sslmode": "verify-full",
                 "sslrootcert": os.environ["PGSSLROOTCERT"],
@@ -162,7 +162,7 @@ DATABASES = {"default": {
     "PASSWORD": os.environ["PGPASSWORD"],
     "HOST": os.getenv("PGHOST", "127.0.0.1"),
     "PORT": os.getenv("PGPORT", "5432"),
-    "OPTIONS": {} if LOCAL else {
+    "OPTIONS": {} if LOCAL or os.getenv("TRADING_PRIVATE_POSTGRES") == "1" else {
         "sslmode": "verify-full",
         "sslrootcert": os.environ["PGSSLROOTCERT"],
     },
@@ -182,6 +182,7 @@ TIME_ZONE = "UTC"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 SECURE_SSL_REDIRECT = not LOCAL
+SECURE_REDIRECT_EXEMPT = [r"^healthz/$"]
 SECURE_HSTS_SECONDS = 300 if not LOCAL else 0
 SESSION_COOKIE_SECURE = not LOCAL
 CSRF_COOKIE_SECURE = not LOCAL
@@ -214,4 +215,38 @@ else:
 # Provide profile and sidebar data to Django templates.
 TEMPLATES[0]["OPTIONS"]["context_processors"].append(
     "trading.profiles.trading_navigation"
+)
+
+# Apply these overrides only to the private beta process.
+BETA_ORIGIN = os.getenv("TRADING_BETA_ORIGIN")
+if BETA_ORIGIN:
+    beta_url = urlsplit(BETA_ORIGIN)
+    if (
+        beta_url.scheme != "https"
+        or not beta_url.hostname
+        or not beta_url.hostname.endswith(".trycloudflare.com")
+        or beta_url.path
+        or beta_url.query
+        or beta_url.fragment
+    ):
+        raise RuntimeError("Use the HTTPS origin of the protected Quick Tunnel.")
+
+    DEBUG = False
+    ALLOWED_HOSTS = [beta_url.hostname]
+    CSRF_TRUSTED_ORIGINS = [BETA_ORIGIN]
+    PUBLIC_ORIGIN = BETA_ORIGIN
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    ADMIN_ROUTE_ENABLED = False
+# Shared provider requests and alternate market data venue.
+MARKET_REFRESH_MINUTES = int(os.getenv("MARKET_REFRESH_MINUTES", "5"))
+if MARKET_REFRESH_MINUTES not in {1, 5, 15}:
+    raise RuntimeError("MARKET_REFRESH_MINUTES must be 1, 5 or 15.")
+MARKET_BINANCE_ENABLED = os.getenv("MARKET_BINANCE_ENABLED") == "1"
+PLATFORM_LAB_ENABLED = os.getenv("PLATFORM_LAB_ENABLED") == "1"
+
+MARKET_BINANCE_STREAM_SYMBOLS = frozenset(
+    symbol.strip() for symbol in os.getenv("MARKET_BINANCE_STREAM_SYMBOLS", "").split(",")
+    if symbol.strip()
 )
