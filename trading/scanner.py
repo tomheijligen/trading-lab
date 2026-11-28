@@ -15,12 +15,11 @@ from .models import MarketObservation
 from .strategy_lab import clean_history
 
 
-def scanner_universe():
+def scanner_entries():
     try:
         entries = json.loads(os.getenv("MARKET_SCANNER_UNIVERSE", "[]"))
         if not isinstance(entries, list) or len(entries) > 100:
             raise ValueError
-        keys = set()
         for entry in entries:
             group, symbol, venue = entry["group"], entry["symbol"], entry["exchange"]
             if group not in {"stock", "etf", "crypto"}:
@@ -29,10 +28,15 @@ def scanner_universe():
                 raise ValueError
             if not re.fullmatch(r"[A-Z0-9 ._-]{0,35}", venue):
                 raise ValueError
-            keys.add((group, symbol, venue))
-        return sorted(keys)
+        return entries
     except (KeyError, TypeError, ValueError) as error:
         raise ImproperlyConfigured("Invalid MARKET_SCANNER_UNIVERSE JSON.") from error
+
+
+def scanner_universe():
+    return sorted({
+        (entry["group"], entry["symbol"], entry["exchange"]) for entry in scanner_entries()
+    })
 
 
 def refresh_scanner(universe=None):

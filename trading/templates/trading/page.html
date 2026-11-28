@@ -698,6 +698,9 @@
             {% if market_scanner or market_providers %}
                 {% include "trading/market_research.html" %}
             {% endif %}
+            {% if technical_screener %}
+                {% include "trading/technical_screener.html" %}
+            {% endif %}
             {% if historical_simulations %}
             <p>Choose the account's stored EUR close history or an exact validated EUR OHLCV series.
                 For OHLCV, orders use session opens and only closes available strictly before the open.</p>

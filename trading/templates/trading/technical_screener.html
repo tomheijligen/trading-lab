@@ -1,0 +1,40 @@
+<p><a href="{% url 'market_scanner' %}">Market scanner</a></p>
+<form method="get">
+    {{ technical_form.non_field_errors }}
+    {% for field in technical_primary %}
+        <p>{{ field.errors }} {{ field.label_tag }} {{ field }}</p>
+    {% endfor %}
+    <details {% if technical_form.errors %}open{% endif %}>
+        <summary>Indicator filters</summary>
+        {% for low, high in technical_ranges %}
+            <p>{{ low.errors }} {{ high.errors }} {{ low.label_tag }} {{ low }} {{ high.label_tag }} {{ high }}</p>
+        {% endfor %}
+    </details>
+    <p><button type="submit">Apply filters</button></p>
+</form>
+<p>Daily candles in source units. Numeric sorting groups by unit. Indicator filters use current completed-session values.</p>
+<div class="table-scroll"><table>
+    <thead><tr>{% for label, query in technical_headers %}
+        <th scope="col"><a href="?{{ query }}">{{ label }}</a></th>
+    {% endfor %}</tr></thead>
+    <tbody>{% for row in technical_rows %}
+        <tr>
+            <th scope="row">{{ row.symbol }} · {{ row.exchange }} · {{ row.asset_class }}<br>
+                {% if row.series %}{{ row.series.provider }} · {{ row.series.adjustment }}
+                {% elif row.status == "invalid_configuration" %}Conflicting or invalid series configuration
+                {% else %}Series unconfigured{% endif %}
+                {% if row.metrics.price.as_of %}<br>{{ row.metrics.price.as_of|date:"Y-m-d" }}{% endif %}
+            </th>
+            {% for metric in row.metrics.values %}
+                <td>
+                    {% if metric.value != None %}
+                        {{ metric.value|floatformat:4 }} {{ metric.unit }}
+                        {% if metric.status == "stale" %}<small>Stale</small>{% endif %}
+                    {% elif metric.status == "insufficient" %}<small>Insufficient history</small>
+                    {% elif metric.status == "unknown_calendar" %}<small>Calendar unavailable</small>
+                    {% else %}<small>Unavailable</small>{% endif %}
+                </td>
+            {% empty %}<td colspan="18">Unavailable</td>{% endfor %}
+        </tr>
+    {% empty %}<tr><td colspan="19">No matching instruments.</td></tr>{% endfor %}</tbody>
+</table></div>
