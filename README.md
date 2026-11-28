@@ -406,6 +406,41 @@ common private keys, provider-token patterns and local dotenv files, and reports
 Review new files before staging since the scan covers tracked files. This lightweight check
 does not scan Git history or detect every credential format.
 
+## Technical market screener
+
+The original watchlist scanner links to **Technical screener** at `/research/technical/`.
+Use the same `MARKET_SCANNER_UNIVERSE` (up to 100 instruments) and supply the exact series
+for each technical row. For example:
+
+```json
+[{"group":"crypto","symbol":"BTC/EUR","exchange":"BINANCE","provider":"binance","currency":"EUR","adjustment":"raw"}]
+```
+
+Provider keys are `binance`, `twelve` and `alpaca`. Use a supported venue MIC for equities.
+Legacy watchlist entries remain visible as unconfigured. Conflicting selections are unavailable.
+The view reads stored bars in one batch and uses the existing cached exchange schedules. It never
+requests quotes, FX, or backfills. Select a currency for price-denominated filters. Numeric
+sorting groups by unit and keeps unknown values last. Volume uses shares for stocks and ETFs
+and base units for crypto. Apply volume thresholds within a comparable universe.
+
+All calculations use positive, valid OHLCV for completed venue sessions with observations available
+at request time. Calculations use the contiguous run ending at the last available session within a
+400-calendar-day lookback. A gap resets warm-up. If a later completed session is missing or rejected,
+available values are marked stale and excluded from numeric filters. A missing value or unsupported
+calendar produces an explicit status. Each metric carries value, unit, session date and provider.
+
+| Metric | Definition and minimum history |
+|---|---|
+| Last close, day volume, day range | Latest candle. Range is `100 × (high − low) / close`. Missing volume stays unavailable. |
+| SMA20/50/200 and distance to SMA20 | Mean of the last 20/50/200 closes. Distance is `100 × (close / SMA20 − 1)`. |
+| 10-/20-session return | `100 × (close / close N sessions back − 1)`, requiring 11/21 closes. |
+| Relative day volume | Latest completed volume divided by the mean of the previous 20 volumes. Requires all 21 observations and a positive mean. |
+| Close volatility | Population standard deviation of the latest 20 daily log returns, multiplied by 100. Requires 21 closes. |
+| RSI14 | Wilder averages of positive and negative changes. Seed each with the mean of the first 14 changes, then use weight 1/14. Requires 15 closes. A flat series gives 50. |
+| MACD 12/26/9 | EMA12 minus EMA26. Seed each EMA with its initial SMA and use weight 2/(N+1). The line needs 26 closes. Its 9-period EMA signal and histogram need 34. |
+| ATR14 | True range is `max(high, previous close) − min(low, previous close)`. Seed with the mean of the first 14 ranges, then use Wilder weight 1/14. Requires 15 candles. |
+| 52-week high/low | Highest high and lowest low across all expected sessions in the 364 calendar days up to and including the metric's session date. Requires complete coverage. |
+
 ## Code map
 
 | Path | Purpose |

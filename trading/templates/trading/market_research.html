@@ -1,4 +1,5 @@
 {% if market_scanner %}
+<p><a href="{% url 'technical_scanner' %}">Technical screener</a></p>
 <p>Ranking uses completed daily closes in the source currency. Quote age is measured from the provider timestamp.</p>
 <form method="get">{{ ranking_form.as_p }}<button type="submit">Update ranking</button></form>
 <div class="table-scroll"><table>

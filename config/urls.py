@@ -10,6 +10,7 @@ from trading.bot_views import bot_settings
 from trading.market_views import providers, scanner
 from trading.simulation_views import simulations, simulation_export
 from trading.strategy_lab import strategy_comparison
+from trading.technical_views import technical_scanner
 
 urlpatterns = [
     path("healthz/", health, name="health"),
@@ -41,6 +42,7 @@ urlpatterns = [
     path("accounts/<int:pk>/simulations/", simulations, name="simulations"),
     path("accounts/<int:pk>/simulations/<int:job_id>/", simulation_export, name="simulation_export"),
     path("research/scanner/", scanner, name="market_scanner"),
+    path("research/technical/", technical_scanner, name="technical_scanner"),
     path("research/providers/", providers, name="market_providers"),
     path("profile/", profiles.profile_page, name="profile"),
     path("profile/avatar/", profiles.profile_avatar, name="profile_avatar"),
